@@ -44120,7 +44120,8 @@
         "description": "How a tenant's card should look.\n\nEvery field is optional and the site falls back to Madar's own palette, so a\ntenant who has set nothing still gets a finished card rather than an\nunstyled one. `org_name` is NOT optional: whose card this is must always be\non it, however little else has been configured.",
         "required": [
           "org_name",
-          "program_name"
+          "program_name",
+          "logo_is_mark"
         ],
         "properties": {
           "background_color": {
@@ -44141,6 +44142,10 @@
               "string",
               "null"
             ]
+          },
+          "logo_is_mark": {
+            "type": "boolean",
+            "description": "True when the logo is a shape on transparency, so the card may repaint\nit in the foreground for contrast. False for a logo with its background\nbaked in, which gets a plate to sit on instead — repainting that one\nwould give a solid rectangle. See `orgs::branding::is_mark`."
           },
           "logo_url": {
             "type": [
@@ -53094,6 +53099,13 @@
               "string",
               "null"
             ]
+          },
+          "brand_logo_is_mark": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "True when the logo is a shape on transparency, so a card may repaint it\nfor contrast (`branding::is_mark`). NULL until it has been looked at."
           },
           "currency_code": {
             "type": "string",

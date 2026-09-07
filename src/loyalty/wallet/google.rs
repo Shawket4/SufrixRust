@@ -78,6 +78,10 @@ struct SaveClaims {
 ///
 /// One class per ORG, not per programme: it carries the tenant's identity, and
 /// a customer looking at their wallet should see the shop's name on the card.
+/// Where Madar's own mark is served, for a shop that has not uploaded one.
+/// Google REQUIRES a class to carry a logo.
+pub const MADAR_LOGO_PATH: &str = "/public/loyalty/brand/logo.png";
+
 /// The brand comes from the ORGANISATION, like Apple's. It used to be read from
 /// `loyalty_settings`, whose UI was removed when branding moved to the org — so
 /// the class carried no logo and no colour, and every Android card came back in
@@ -103,12 +107,21 @@ pub fn loyalty_class(
         // unlike Apple's, which is packed into the archive as bytes.
         "hexBackgroundColor": brand.palette.background,
     });
-    if let Some(logo) = brand
+    // REQUIRED by Google, and the cause of "Something went wrong" on a save
+    // that still routed to the app: a loyalty class without a `programLogo` is
+    // rejected, and a shop with no logo produced exactly that. Madar's own mark
+    // stands in, so a class is always valid.
+    //
+    // Absolute, because Google fetches this from its own servers — a
+    // site-relative path resolves against nothing there.
+    let logo = brand
         .logo_url
         .as_deref()
         .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
-    {
-        class["programLogo"] = json!({ "sourceUri": { "uri": logo } });
+        .map(|s| s.to_string())
+        .or_else(|| super::absolute_api_url(MADAR_LOGO_PATH));
+    if let Some(uri) = logo {
+        class["programLogo"] = json!({ "sourceUri": { "uri": uri } });
     }
     class
 }
@@ -358,6 +371,7 @@ mod tests {
                 foreground: "#EFF3F4".into(),
                 accent: "#C8607F".into(),
             },
+            logo_is_mark: true,
         };
         let class = loyalty_class("3388000000000000000", uuid::Uuid::nil(), &brand, &s);
         assert_eq!(class["issuerName"], "RUE Coffee");
@@ -379,7 +393,16 @@ mod tests {
     #[test]
     fn google_is_never_pointed_at_a_relative_logo() {
         // Google FETCHES the logo from its own servers, so a site-relative path
-        // resolves against nothing. Better no logo than a broken one.
+        // resolves against nothing — and a class with NO logo is rejected
+        // outright, which is what "something went wrong" on an otherwise
+        // working save link turned out to be. Madar's mark stands in.
+        let _guard = super::super::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: the lock makes this the only thread touching the environment.
+        unsafe {
+            std::env::set_var("PUBLIC_LOYALTY_BASE_URL", "https://loyalty.madar-pos.cloud");
+        }
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let brand = OrgBrand {
             name: "RUE".into(),
@@ -387,7 +410,14 @@ mod tests {
             ..OrgBrand::default()
         };
         let class = loyalty_class("338", uuid::Uuid::nil(), &brand, &s);
-        assert!(class.get("programLogo").is_none());
+        assert_eq!(
+            class["programLogo"]["sourceUri"]["uri"],
+            format!("https://loyalty.madar-pos.cloud/api{MADAR_LOGO_PATH}"),
+            "a relative logo falls back to Madar's, never to no logo at all"
+        );
+        unsafe {
+            std::env::remove_var("PUBLIC_LOYALTY_BASE_URL");
+        }
         // The colour still lands — it needs no fetching.
         assert_eq!(
             class["hexBackgroundColor"],

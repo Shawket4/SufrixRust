@@ -152,13 +152,26 @@ pub fn origin_of(url: &str) -> Option<String> {
 /// made one unset variable mean "no pass ever updates again" — silently, and
 /// unfixably for every pass already issued under it.
 pub fn web_service_url() -> Option<String> {
+    absolute_api_url("/wallet")
+}
+
+/// An absolute, publicly reachable URL for one of this backend's paths.
+///
+/// Needed wherever a URL leaves our own pages: baked into a file on someone's
+/// phone, or handed to Google to fetch from its servers. Site-relative works for
+/// the customer's own browser and nowhere else.
+///
+/// Prefers the customer-facing host, whose `/api/` nginx strips before proxying
+/// — the same route the `.pkpass` download already takes, so if one works both
+/// do. Falls back to the API's own origin, which is where these paths actually
+/// live, so a single unset variable cannot silently disable pass updates for
+/// every pass already issued.
+pub fn absolute_api_url(path: &str) -> Option<String> {
     if let Some(base) = loyalty_base() {
-        return Some(format!("{base}/api/wallet"));
+        return Some(format!("{base}/api{path}"));
     }
-    // `UPLOADS_BASE_URL` is already set wherever images work, and it points at
-    // the API.
     let uploads = std::env::var("UPLOADS_BASE_URL").ok()?;
-    Some(format!("{}/wallet", origin_of(&uploads)?))
+    Some(format!("{}{path}", origin_of(&uploads)?))
 }
 
 /// Build both "add to wallet" links for a member.

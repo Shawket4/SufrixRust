@@ -42,6 +42,9 @@ pub struct Org {
     pub brand_background: Option<String>,
     pub brand_foreground: Option<String>,
     pub brand_accent: Option<String>,
+    /// True when the logo is a shape on transparency, so a card may repaint it
+    /// for contrast (`branding::is_mark`). NULL until it has been looked at.
+    pub brand_logo_is_mark: Option<bool>,
     pub is_active: bool,
     /// IANA timezone name. The org-level default that branches inherit when
     /// their own timezone is unset. Defaults to `Africa/Cairo`.
@@ -257,7 +260,7 @@ pub async fn create_org(
         r#"
         INSERT INTO organizations (name, slug, logo_url, currency_code, tax_rate, receipt_footer, timezone)
         VALUES ($1, $2, $3, $4, $5, $6, $7::timezone_name)
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, brand_logo_is_mark, is_active, timezone::text AS timezone
         "#,
     )
     .bind(&name)
@@ -310,7 +313,7 @@ pub async fn list_orgs(req: HttpRequest, pool: crate::db::Db) -> Result<HttpResp
 
     let orgs = sqlx::query_as::<_, Org>(
         r#"
-        SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
+        SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, brand_logo_is_mark, is_active, timezone::text AS timezone
         FROM organizations
         WHERE deleted_at IS NULL
         ORDER BY name
@@ -513,7 +516,7 @@ pub async fn update_org(
             timezone       = COALESCE(NULLIF($10, '')::timezone_name, timezone),
             updated_at     = NOW()
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, brand_logo_is_mark, is_active, timezone::text AS timezone
         "#,
     )
     .bind(*org_id)
@@ -651,19 +654,25 @@ pub async fn upload_org_logo(
     // else supplied. A logo we cannot decode, or one with no colour in it (a
     // plain black mark is common), leaves the columns NULL and the card falls
     // back to Madar's palette — a finished card, not a broken one.
-    let palette = image::load_from_memory(&logo_bytes)
-        .ok()
+    let decoded = image::load_from_memory(&logo_bytes).ok();
+    let palette = decoded
         .as_ref()
         .and_then(crate::orgs::branding::palette_from_image);
+    // Whether the card may repaint this logo for contrast. Decided here, where
+    // the pixels already are, rather than on every card view.
+    let logo_is_mark = decoded
+        .as_ref()
+        .map(crate::orgs::branding::is_mark)
+        .unwrap_or(false);
 
     let org = sqlx::query_as::<_, Org>(
         r#"
         UPDATE organizations
         SET logo_url = $2, updated_at = NOW(),
             brand_background = $3, brand_foreground = $4, brand_accent = $5,
-            brand_logo_source = $2
+            brand_logo_source = $2, brand_logo_is_mark = $6
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, brand_logo_is_mark, is_active, timezone::text AS timezone
         "#,
     )
     .bind(*org_id)
@@ -671,6 +680,7 @@ pub async fn upload_org_logo(
     .bind(palette.as_ref().map(|p| p.background.clone()))
     .bind(palette.as_ref().map(|p| p.foreground.clone()))
     .bind(palette.as_ref().map(|p| p.accent.clone()))
+    .bind(logo_is_mark)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or_else(|| AppError::NotFound("Org not found".into()))?;
@@ -737,7 +747,7 @@ pub(crate) fn extract_claims(req: &HttpRequest) -> Result<Claims, AppError> {
 
 async fn fetch_org(pool: &PgPool, id: Uuid) -> Result<Org, AppError> {
     sqlx::query_as::<_, Org>(
-        "SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
+        "SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, brand_logo_is_mark, is_active, timezone::text AS timezone
          FROM organizations
          WHERE id = $1 AND deleted_at IS NULL",
     )

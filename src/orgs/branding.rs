@@ -4,10 +4,11 @@
 //! nothing else to configure, and no way to choose two colours nobody can read.
 //! The palette is DERIVED, so it cannot be set wrong.
 //!
-//! The maths here is pure and unit-tested; the fetching and caching sit in
-//! [`super::brand_refresh`]. Deriving a palette means decoding an image, which
-//! has no business happening while a customer waits for their card — the result
-//! is cached on the organisation row against the logo it came from.
+//! The maths here is pure and unit-tested. Deriving a palette means decoding an
+//! image, which has no business happening while a customer waits for their card,
+//! so the result is cached on the organisation row against the logo it came
+//! from — computed once at upload, and healed on first read for a logo that
+//! predates the column ([`load`]).
 
 use image::GenericImageView;
 
@@ -156,8 +157,12 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
     // Coarse buckets: exact-colour counting loses to anti-aliasing, where every
     // pixel of a flat logo is a slightly different value.
     const BUCKET: u32 = 24;
-    let mut counts: std::collections::HashMap<(u32, u32, u32), (u64, u64, u64, u64)> =
-        std::collections::HashMap::new();
+    /// A bucket's key: the quantised colour.
+    type Bucket = (u32, u32, u32);
+    /// What we accumulate per bucket: how many pixels, and their channel sums,
+    /// so the winner can be the bucket's MEAN rather than its corner.
+    type Tally = (u64, u64, u64, u64);
+    let mut counts: std::collections::HashMap<Bucket, Tally> = std::collections::HashMap::new();
 
     // Downscaled with NEAREST, not a smoothing filter: interpolation invents
     // colours that are in no part of the logo, and a dominant-colour search
@@ -166,8 +171,8 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
     let (w, h) = img.dimensions();
     let small = if w > 96 || h > 96 {
         img.resize_exact(
-            w.min(96).max(1),
-            h.min(96).max(1),
+            w.clamp(1, 96),
+            h.clamp(1, 96),
             image::imageops::FilterType::Nearest,
         )
     } else {
@@ -221,6 +226,61 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
     })
 }
 
+/// Is this logo a MARK — a shape on transparency — or an opaque tile?
+///
+/// It decides how the logo may be drawn, and the two answers are opposites.
+///
+/// A mark can be recoloured: paint every opaque pixel in the card's foreground
+/// and it becomes a silhouette that is legible on the card BY CONSTRUCTION,
+/// because the foreground is the one colour already guaranteed to clear AA on
+/// that ground. This is what a card wants, since the ground is derived from the
+/// logo's own dominant colour — so a logo drawn in its own colours is, almost
+/// by definition, the colour it is sitting on. Blue on blue.
+///
+/// A logo with its background baked in cannot be recoloured: every pixel is
+/// opaque, so the silhouette is a solid rectangle. That one gets a plate to sit
+/// on instead.
+///
+/// The test is transparency, measured over the whole image rather than guessed
+/// at from the corners: a mark leaves a lot of the frame empty, and a photo or
+/// a baked tile leaves almost none.
+pub fn is_mark(img: &image::DynamicImage) -> bool {
+    const CLEAR: u8 = 16;
+    /// A mark's frame is mostly empty. A tile's is not remotely.
+    const ENOUGH: f64 = 0.10;
+
+    let rgba = img.to_rgba8();
+    let total = (rgba.width() as u64) * (rgba.height() as u64);
+    if total == 0 {
+        return false;
+    }
+    let clear = rgba.pixels().filter(|p| p.0[3] < CLEAR).count() as f64;
+    clear / total as f64 > ENOUGH
+}
+
+/// Repaint a mark in one colour, keeping its alpha.
+///
+/// Alpha is what carries the shape, so anti-aliased edges survive and the
+/// result reads as the same logo rather than a traced one. Only ever called on
+/// something [`is_mark`] agreed to.
+pub fn tint_mark(img: &image::DynamicImage, hex: &str) -> image::DynamicImage {
+    let (r, g, b) = parse_hex(hex).unwrap_or((255, 255, 255));
+    let mut rgba = img.to_rgba8();
+    for p in rgba.pixels_mut() {
+        p.0 = [r, g, b, p.0[3]];
+    }
+    image::DynamicImage::ImageRgba8(rgba)
+}
+
+/// `#RRGGBB` to its channels.
+pub fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
+    if hex.len() != 7 || !hex.starts_with('#') {
+        return None;
+    }
+    let c = |a: usize, b: usize| u8::from_str_radix(&hex[a..b], 16).ok();
+    Some((c(1, 3)?, c(3, 5)?, c(5, 7)?))
+}
+
 /// Who a shop is, everywhere a customer sees them.
 ///
 /// One row, one loader. The web card, the Apple pass and the Google pass all
@@ -228,7 +288,7 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
 /// how they came to disagree — the pass kept reading colours out of
 /// `loyalty_settings` long after the UI for them was removed, so every pass came
 /// back Apple's default grey while the web card was correctly themed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OrgBrand {
     /// The organisation's name, as it appears in a customer's wallet list.
     /// Empty when the org has somehow gone missing, which callers fall back on.
@@ -239,16 +299,9 @@ pub struct OrgBrand {
     pub logo_url: Option<String>,
     /// Derived from the logo when it was uploaded; Madar's own until then.
     pub palette: Palette,
-}
-
-impl Default for OrgBrand {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            logo_url: None,
-            palette: Palette::default(),
-        }
-    }
+    /// True when [`is_mark`] says the logo can be recoloured for contrast.
+    /// False for an opaque tile, and for no logo at all.
+    pub logo_is_mark: bool,
 }
 
 /// Read an organisation's brand.
@@ -264,9 +317,11 @@ pub async fn load(pool: &sqlx::PgPool, org_id: uuid::Uuid) -> Result<OrgBrand, s
         brand_background: Option<String>,
         brand_foreground: Option<String>,
         brand_accent: Option<String>,
+        brand_logo_is_mark: Option<bool>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT name, logo_url, brand_background, brand_foreground, brand_accent \
+        "SELECT name, logo_url, brand_background, brand_foreground, brand_accent, \
+                brand_logo_is_mark \
            FROM organizations WHERE id = $1",
     )
     .bind(org_id)
@@ -275,6 +330,24 @@ pub async fn load(pool: &sqlx::PgPool, org_id: uuid::Uuid) -> Result<OrgBrand, s
     let Some(row) = row else {
         return Ok(OrgBrand::default());
     };
+
+    // Healed on first read, not backfilled by an operator. The column arrived
+    // after these logos did, and a shop should not have to re-upload its mark
+    // to get a card that reads. One decode per organisation, ever.
+    let logo_is_mark = match (row.brand_logo_is_mark, row.logo_url.as_deref()) {
+        (Some(known), _) => known,
+        (None, Some(url)) => {
+            let mark = read_logo(url).map(|img| is_mark(&img)).unwrap_or(false);
+            let _ = sqlx::query("UPDATE organizations SET brand_logo_is_mark = $2 WHERE id = $1")
+                .bind(org_id)
+                .bind(mark)
+                .execute(pool)
+                .await;
+            mark
+        }
+        (None, None) => false,
+    };
+
     let d = Palette::default();
     Ok(OrgBrand {
         name: row.name,
@@ -284,7 +357,24 @@ pub async fn load(pool: &sqlx::PgPool, org_id: uuid::Uuid) -> Result<OrgBrand, s
             foreground: row.brand_foreground.unwrap_or(d.foreground),
             accent: row.brand_accent.unwrap_or(d.accent),
         },
+        logo_is_mark,
     })
+}
+
+/// Decode an organisation's logo from the uploads directory.
+///
+/// From DISK, never fetched: the file is already local, so there is no network
+/// call while a customer waits and no server-side request to an address someone
+/// else supplied. Returns `None` for anything unreadable, which every caller
+/// treats as "no logo" rather than as an error.
+pub fn read_logo(logo_url: &str) -> Option<image::DynamicImage> {
+    let file = logo_url.rsplit_once("/logos/")?.1;
+    if file.is_empty() || file.contains('/') || file.contains("..") {
+        return None;
+    }
+    let dir = std::env::var("UPLOADS_DIR").unwrap_or_else(|_| "./uploads".into());
+    let bytes = std::fs::read(format!("{dir}/logos/{file}")).ok()?;
+    image::load_from_memory(&bytes).ok()
 }
 
 #[cfg(test)]

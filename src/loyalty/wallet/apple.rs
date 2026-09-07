@@ -99,8 +99,24 @@ impl Default for PassBrand {
 /// and on the lock screen — a pass without it is refused outright) and `logo`
 /// (up to 160×50pt in the header). Aspect ratio is preserved for the logo and
 /// the icon is squared, because a stretched mark is worse than Madar's.
-fn images_from_logo(bytes: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
-    let img = image::load_from_memory(bytes).ok()?;
+///
+/// `tint` repaints a MARK so it reads on the pass. The pass's ground is derived
+/// from the logo's own dominant colour, so a logo left in its own colours is
+/// very nearly the colour it is sitting on; the foreground is the one colour
+/// already guaranteed to clear AA on that ground. Passed `None` for a logo with
+/// its background baked in, where repainting would give a solid rectangle.
+fn images_from_logo(
+    img: &image::DynamicImage,
+    tint: Option<&str>,
+) -> Option<Vec<(String, Vec<u8>)>> {
+    let owned;
+    let img = match tint {
+        Some(hex) => {
+            owned = crate::orgs::branding::tint_mark(img, hex);
+            &owned
+        }
+        None => img,
+    };
     let mut out = Vec::with_capacity(6);
     let encode = |im: image::DynamicImage| -> Option<Vec<u8>> {
         let mut buf = std::io::Cursor::new(Vec::new());
@@ -140,12 +156,15 @@ pub fn pass_brand(brand: &crate::orgs::branding::OrgBrand) -> PassBrand {
     let images = brand
         .logo_url
         .as_deref()
-        .and_then(|url| url.rsplit_once("/logos/").map(|(_, f)| f.to_string()))
-        .and_then(|file| {
-            let dir = std::env::var("UPLOADS_DIR").unwrap_or_else(|_| "./uploads".into());
-            std::fs::read(format!("{dir}/logos/{file}")).ok()
+        .and_then(crate::orgs::branding::read_logo)
+        .and_then(|img| {
+            // A mark is repainted in the pass's own foreground; a baked tile is
+            // left alone, because a silhouette of it is just a rectangle.
+            let tint = brand
+                .logo_is_mark
+                .then_some(brand.palette.foreground.as_str());
+            images_from_logo(&img, tint)
         })
-        .and_then(|bytes| images_from_logo(&bytes))
         .unwrap_or(d.images);
 
     PassBrand {
@@ -263,6 +282,14 @@ pub fn pass_json(
         // pass carries an auth token, which is minted at signup.
         "authenticationToken": member.apple_auth_token,
         "storeCard": {
+            // The strip a customer sees WITHOUT opening the pass. Wallet stacks
+            // cards and shows only this row, so a pass with no header fields
+            // answers "how many do I have?" with nothing until you tap it.
+            "headerFields": [{
+                "key": "header",
+                "label": super::google::balance_label(mode),
+                "value": balance
+            }],
             "primaryFields": [{
                 "key": "balance",
                 "label": super::google::balance_label(mode),
@@ -273,10 +300,17 @@ pub fn pass_json(
                 "label": program,
                 "value": progress_line(balance, threshold)
             }],
+            // What they are working towards. This row used to repeat the
+            // member's name, which is already under the barcode and on the
+            // back — three times on one card, and none of them the thing a
+            // customer is actually counting for.
             "auxiliaryFields": [{
-                "key": "name",
-                "label": "Member",
-                "value": member.name
+                "key": "reward",
+                "label": "Next reward",
+                "value": rewards.first().cloned().unwrap_or_else(|| format!(
+                    "{threshold} {}",
+                    super::google::balance_label(mode).to_lowercase()
+                ))
             }],
             "backFields": back
         },
@@ -573,7 +607,30 @@ mod tests {
             p["storeCard"]["secondaryFields"][0]["value"],
             "30 / 100 to your next reward"
         );
-        assert_eq!(p["storeCard"]["auxiliaryFields"][0]["value"], "Ali Hassan");
+        // Wallet stacks cards and shows only the header strip. Without this a
+        // customer cannot see their balance without tapping the pass open.
+        assert_eq!(p["storeCard"]["headerFields"][0]["value"], 30);
+        assert_eq!(p["storeCard"]["headerFields"][0]["label"], "Points");
+        // The auxiliary row names what they are counting FOR. It used to repeat
+        // the member's name, which is already under the barcode and on the back.
+        assert_eq!(
+            p["storeCard"]["auxiliaryFields"][0]["value"], "100 points",
+            "with no reward catalogue, the target stands in"
+        );
+        let with = pass_json(
+            &member(),
+            &s,
+            &[],
+            &["Free espresso — 5 visits".to_string()],
+            &PassBrand::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            with["storeCard"]["auxiliaryFields"][0]["value"],
+            "Free espresso — 5 visits"
+        );
+        // And the name is still on the card, once, where a teller reads it.
+        assert_eq!(p["barcodes"][0]["altText"], "Ali Hassan");
     }
 
     #[test]
@@ -653,7 +710,8 @@ mod tests {
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
 
-        let set = images_from_logo(&png.into_inner()).expect("a real PNG resizes");
+        let decoded = image::load_from_memory(&png.into_inner()).unwrap();
+        let set = images_from_logo(&decoded, None).expect("a real PNG resizes");
         let names: Vec<&str> = set.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names,
@@ -670,7 +728,45 @@ mod tests {
 
         // Junk falls back rather than shipping a pass with no icon, which iOS
         // refuses outright.
-        assert!(images_from_logo(b"not an image").is_none());
+
+        // A MARK is repainted so it reads on the card. The pass's ground comes
+        // from the logo's own dominant colour, so a logo left alone is very
+        // nearly the colour it sits on — the shop that reported this had a blue
+        // mark on a blue card.
+        let mut mark = image::RgbaImage::new(40, 40);
+        for (x, y, px) in mark.enumerate_pixels_mut() {
+            // A shape on transparency: opaque in the middle, clear around it.
+            let solid = (10..30).contains(&x) && (10..30).contains(&y);
+            *px = image::Rgba([0x1E, 0x3A, 0x8A, if solid { 255 } else { 0 }]);
+        }
+        assert!(
+            crate::orgs::branding::is_mark(&image::DynamicImage::ImageRgba8(mark.clone())),
+            "a shape on transparency is a mark"
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(mark)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let decoded = image::load_from_memory(&buf.into_inner()).unwrap();
+        let tinted = images_from_logo(&decoded, Some("#EFF3F4")).unwrap();
+        let icon = image::load_from_memory(&tinted[0].1).unwrap().to_rgba8();
+        let opaque = icon.pixels().find(|p| p.0[3] > 200).expect("a shape");
+        assert_eq!(
+            [opaque.0[0], opaque.0[1], opaque.0[2]],
+            [0xEF, 0xF3, 0xF4],
+            "the mark is repainted in the pass's foreground, not left blue"
+        );
+
+        // A logo with its background BAKED IN is not a mark: every pixel is
+        // opaque, so repainting it would give a solid rectangle. It keeps its
+        // own colours and gets a plate to sit on instead.
+        assert!(!crate::orgs::branding::is_mark(
+            &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                40,
+                40,
+                image::Rgba([0x1E, 0x3A, 0x8A, 255])
+            ))
+        ));
     }
 
     #[test]

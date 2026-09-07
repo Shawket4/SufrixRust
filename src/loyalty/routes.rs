@@ -67,6 +67,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 .wrap(Condition::new(limited, Governor::new(&browse_gov)))
                 .route(web::get().to(public::card_qr)),
         )
+        // Madar's mark. Static bytes, no rate limit: Google fetches it from its
+        // own servers on a schedule we do not control, and throttling it would
+        // show up as a class with a broken logo.
+        .service(
+            web::resource(super::wallet::google::MADAR_LOGO_PATH)
+                .route(web::get().to(public::brand_logo)),
+        )
         .service(
             web::resource("/public/loyalty/pass/{token}/apple.pkpass")
                 .wrap(Condition::new(limited, Governor::new(&browse_gov)))

@@ -71,6 +71,11 @@ pub struct CardBrand {
     pub program_name: String,
     pub program_name_ar: Option<String>,
     pub logo_url: Option<String>,
+    /// True when the logo is a shape on transparency, so the card may repaint
+    /// it in the foreground for contrast. False for a logo with its background
+    /// baked in, which gets a plate to sit on instead — repainting that one
+    /// would give a solid rectangle. See `orgs::branding::is_mark`.
+    pub logo_is_mark: bool,
     /// `#RRGGBB`, validated on write.
     pub background_color: Option<String>,
     pub foreground_color: Option<String>,
@@ -94,10 +99,27 @@ fn card_brand(
         program_name: s.program_name.clone(),
         program_name_ar: s.program_name_ar.clone(),
         logo_url: org.logo_url.clone(),
+        logo_is_mark: org.logo_is_mark,
         background_color: Some(org.palette.background.clone()),
         foreground_color: Some(org.palette.foreground.clone()),
         label_color: Some(org.palette.accent.clone()),
     }
+}
+
+/// Madar's own mark, for a shop that has not uploaded one.
+///
+/// Exists because Google REQUIRES a loyalty class to carry a `programLogo` and
+/// fetches it from its own servers, so "no logo" cannot be expressed by leaving
+/// the field out — that is a rejected class and a customer seeing "something
+/// went wrong". Served from the bytes already compiled into the binary, so it
+/// needs no uploads directory, no static mount and no deployment step.
+pub async fn brand_logo() -> HttpResponse {
+    const LOGO: &[u8] = include_bytes!("../../static/wallet/logo@3x.png");
+    HttpResponse::Ok()
+        .content_type("image/png")
+        // It changes when the binary does, and Google caches aggressively.
+        .insert_header(("Cache-Control", "public, max-age=86400"))
+        .body(LOGO)
 }
 
 /// A reward as the signup page lists it: what it is, and what it costs.
