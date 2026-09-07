@@ -19,6 +19,12 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/floor")
             .wrap(JwtMiddleware)
+            // The floor is ONE scope. actix hands a prefix to the first scope
+            // that matches and never falls through, so cross-table operations
+            // register in here rather than opening a second `/floor` — and they
+            // register first, because `/tables/{id}` below matches the literal
+            // `/tables/swap` too.
+            .configure(crate::floor_ops::routes::register)
             .route("/sections", web::get().to(floor::list_sections))
             .route("/sections", web::post().to(floor::create_section))
             .route("/sections/{id}", web::patch().to(floor::update_section))

@@ -252,17 +252,62 @@ pub async fn clear_table(
     let claims = extract_claims(&req)?;
     check_permission(pool.get_ref(), &claims, "open_tickets", "update").await?;
     require_branch_access(pool.get_ref(), &claims, body.branch_id).await?;
+    clear_table_inner(
+        pool,
+        *id,
+        Some(body.branch_id),
+        ActingContext::live(&claims)?,
+        Some(hub.get_ref()),
+    )
+    .await
+}
+
+/// Clear core: the `dirty` -> `free` walk, shared by the live route and
+/// `/sync/replay`.
+///
+/// `branch_id` is what the LIVE caller asserted, and the table must be in it.
+/// Replay passes `None` and the branch is read off the table instead: the POS
+/// queues this op with an empty `request` body (it has always sent `{}`), so
+/// there is no branch on the wire — and shipped builds cannot be asked to start
+/// sending one. That lookup is safe without a branch check of its own: `pool` is
+/// tenant-scoped, so a table outside the caller's org is not visible and this
+/// 404s (and `op_branch_must_be_in_org` has already rejected a cross-org table
+/// outright), while the replay actor is always a teller/waiter/kitchen user —
+/// all org-scoped rather than branch-scoped.
+pub(crate) async fn clear_table_inner(
+    pool: crate::db::Db,
+    table_id: Uuid,
+    branch_id: Option<Uuid>,
+    actor: ActingContext,
+    hub: Option<&BranchEventHub>,
+) -> Result<HttpResponse, AppError> {
+    let branch_id = match branch_id {
+        Some(b) => b,
+        None => sqlx::query_scalar("SELECT branch_id FROM branch_tables WHERE id = $1")
+            .bind(table_id)
+            .fetch_optional(pool.get_ref())
+            .await?
+            .ok_or_else(|| AppError::NotFound("Table not found".into()))?,
+    };
+    check_permission_for(
+        pool.get_ref(),
+        actor.teller_id,
+        &actor.role,
+        "open_tickets",
+        "update",
+    )
+    .await?;
 
     let mut tx = pool.get_ref().begin().await?;
-    if !lock_table(&mut tx, *id, body.branch_id).await? {
+    if !lock_table(&mut tx, table_id, branch_id).await? {
         return Err(AppError::NotFound("Table not found".into()));
     }
     // A table someone is sitting at is not "bussed", whatever its status says.
-    if occupant_of(&mut tx, *id, None).await?.is_some() {
+    if occupant_of(&mut tx, table_id, None).await?.is_some() {
         return Err(AppError::Conflict("Someone is seated at this table".into()));
     }
     let status: String = sqlx::query_scalar("SELECT status FROM branch_tables WHERE id = $1")
-        .bind(*id)
+        .bind(table_id)
         .fetch_one(&mut *tx)
         .await?;
     if status != "dirty" {
@@ -275,14 +320,14 @@ pub async fn clear_table(
             "Table is {status}, not waiting to be cleared"
         )));
     }
-    free_table(&mut *tx, *id).await?;
+    free_table(&mut *tx, table_id).await?;
     tx.commit().await?;
 
-    let mut events = FloorEvents::default();
-    events.tables.push(*id);
-    events
-        .publish(pool.get_ref(), hub.get_ref(), body.branch_id)
-        .await;
+    if let Some(hub) = hub {
+        let mut events = FloorEvents::default();
+        events.tables.push(table_id);
+        events.publish(pool.get_ref(), hub, branch_id).await;
+    }
     Ok(HttpResponse::Ok().json(serde_json::json!({ "ok": true })))
 }
 

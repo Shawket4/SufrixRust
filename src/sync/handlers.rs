@@ -105,6 +105,16 @@ pub enum ReplayOp {
         transfer_id: Uuid,
         request: FulfillTransferRequest,
     },
+    /// "The plates are gone" — the one table transition no server can observe.
+    /// The POS has always queued this with an empty `request` (no branch), so
+    /// the core reads the branch off the table; `request` is accepted and
+    /// ignored purely so a body that IS sent doesn't fail the envelope.
+    ClearTable {
+        teller_id: Uuid,
+        table_id: Uuid,
+        #[serde(default)]
+        request: serde_json::Value,
+    },
     // Bookings at service time: a waiter/teller seats a booked party or marks
     // a no-show while the cloud is unreachable. Both idempotent on status.
     SeatBooking {
@@ -137,6 +147,7 @@ impl ReplayOp {
             | ReplayOp::CreateTableTransfer { teller_id, .. }
             | ReplayOp::CancelTableTransfer { teller_id, .. }
             | ReplayOp::FulfillTableTransfer { teller_id, .. }
+            | ReplayOp::ClearTable { teller_id, .. }
             | ReplayOp::SeatBooking { teller_id, .. }
             | ReplayOp::NoShowBooking { teller_id, .. } => *teller_id,
         }
@@ -167,7 +178,8 @@ impl ReplayOp {
             ReplayOp::SwapTables { .. }
             | ReplayOp::CreateTableTransfer { .. }
             | ReplayOp::CancelTableTransfer { .. }
-            | ReplayOp::FulfillTableTransfer { .. } => matches!(role, Teller | Waiter),
+            | ReplayOp::FulfillTableTransfer { .. }
+            | ReplayOp::ClearTable { .. } => matches!(role, Teller | Waiter),
             ReplayOp::SeatBooking { .. } | ReplayOp::NoShowBooking { .. } => {
                 matches!(role, Teller | Waiter)
             }
@@ -197,8 +209,8 @@ impl ReplayOp {
             ReplayOp::BumpKitchenItem { .. } | ReplayOp::UnbumpKitchenItem { .. } => {
                 &[("kitchen_orders", "update")]
             }
-            // Swap checks the moved tickets inside the core.
-            ReplayOp::SwapTables { .. } => &[],
+            // Swap checks the moved tickets inside the core, and so does clear.
+            ReplayOp::SwapTables { .. } | ReplayOp::ClearTable { .. } => &[],
             ReplayOp::CreateTableTransfer { .. } => &[("table_transfers", "create")],
             ReplayOp::CancelTableTransfer { .. } => &[("table_transfers", "update")],
             // Fulfill also checks the occupant's kind inside the core.
@@ -456,6 +468,17 @@ pub async fn replay(
             )
             .await
         }
+        ReplayOp::ClearTable { table_id, .. } => {
+            crate::floor_ops::handlers::clear_table_inner(
+                pool.clone(),
+                table_id,
+                // No branch on the wire: the core reads it off the table.
+                None,
+                actor,
+                Some(hub.get_ref()),
+            )
+            .await
+        }
         ReplayOp::FulfillTableTransfer {
             transfer_id,
             request,
@@ -565,6 +588,17 @@ async fn op_branch_must_be_in_org(pool: &PgPool, op: &ReplayOp, org: Uuid) -> Re
                 .bind(request.branch_id)
                 .fetch_optional(pool)
                 .await?
+        }
+        // The op carries no branch, so the table is the only thing to resolve
+        // through — which is exactly the cross-org check this fn exists for.
+        ReplayOp::ClearTable { table_id, .. } => {
+            sqlx::query_scalar(
+                "SELECT b.org_id FROM branch_tables bt JOIN branches b ON b.id = bt.branch_id \
+                 WHERE bt.id = $1",
+            )
+            .bind(table_id)
+            .fetch_optional(pool)
+            .await?
         }
         ReplayOp::CreateTableTransfer { request, .. } => {
             sqlx::query_scalar("SELECT org_id FROM branches WHERE id = $1")

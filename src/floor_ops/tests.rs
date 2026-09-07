@@ -189,7 +189,8 @@ macro_rules! app {
                 .app_data(web::Data::new($pool.clone()))
                 .app_data(web::Data::new(secret()))
                 .app_data(web::Data::new(BranchEventHub::new()))
-                .configure(crate::floor_ops::routes::configure)
+                // The real `/floor` scope, ops routes included.
+                .configure(crate::reservations::routes::configure)
                 .configure(crate::tickets::routes::configure)
                 .configure(crate::sync::routes::configure),
         )
@@ -749,3 +750,146 @@ async fn replay_applies_a_queued_swap_and_honours_role_boundaries(pool: PgPool) 
 }
 
 // ── Table state (POS operational edits: status walk + zone move) ─────────────
+
+/// `main.rs` once mounted TWO `web::scope("/floor")` — geometry from
+/// `reservations::routes`, then swap/clear/transfers from `floor_ops::routes`.
+/// actix hands a prefix to the FIRST scope that matches and never falls
+/// through, so the second one was dead: every path in it 404'd in production
+/// (405 for `/tables/swap`, which `/tables/{id}` matched) while every test
+/// passed, because no test ever mounted both.
+///
+/// They are one scope now. This asserts the whole of it answers — geometry AND
+/// operations — through the single `configure` main.rs calls.
+#[sqlx::test]
+async fn the_whole_floor_scope_is_reachable(pool: PgPool) {
+    let org = seed_org(&pool).await;
+    let branch = seed_branch(&pool, org).await;
+    let teller = seed_user(&pool, org, "teller").await;
+    grant_defaults(&pool).await;
+    let tok = token(teller, org, UserRole::Teller);
+    let table = seed_table(&pool, org, branch, None, "T1").await;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(secret()))
+            .app_data(web::Data::new(BranchEventHub::new()))
+            .configure(crate::reservations::routes::configure),
+    )
+    .await;
+
+    // Geometry.
+    let r = get_req!(app, tok, &format!("/floor/sections?branch_id={branch}"));
+    assert_eq!(r.status(), 200, "/floor/sections");
+    let r = get_req!(app, tok, &format!("/floor/tables?branch_id={branch}"));
+    assert_eq!(r.status(), 200, "/floor/tables");
+
+    // Cross-table operations: the half a shadowed prefix used to eat.
+    let r = get_req!(app, tok, &format!("/floor/transfers?branch_id={branch}"));
+    assert_eq!(r.status(), 200, "/floor/transfers");
+    let r = post_json!(
+        app,
+        tok,
+        &format!("/floor/tables/{table}/clear"),
+        serde_json::json!({})
+    );
+    assert_ne!(r.status(), 404, "/floor/tables/{{id}}/clear");
+    let r = post_json!(
+        app,
+        tok,
+        "/floor/tables/swap",
+        serde_json::json!({ "branch_id": branch, "table_a": table, "table_b": table })
+    );
+    assert_ne!(r.status(), 404, "/floor/tables/swap");
+    assert_ne!(r.status(), 405, "/floor/tables/swap: /tables/{{id}} swallowed it");
+}
+
+/// Bussing a table is the one floor transition a server cannot observe, and it
+/// had no way home. The POS queues it as `clear_table`; `/sync/replay` had no
+/// such op, so the envelope failed to deserialize, came back 400, and the POS
+/// classifies a 400 as permanently dead — the op was dropped, and the next
+/// floor pull put the table back to `dirty`. Tables stayed dirty forever.
+///
+/// The shipped v0.2.0 core sends `request: {}` (it has never had a branch to
+/// put there), so that exact envelope is what this replays.
+#[sqlx::test]
+async fn replay_clears_a_bussed_table(pool: PgPool) {
+    let app = app!(pool);
+    let org = seed_org(&pool).await;
+    let branch = seed_branch(&pool, org).await;
+    let teller = seed_user(&pool, org, "teller").await;
+    let waiter = seed_user(&pool, org, "waiter").await;
+    let item = seed_menu_item(&pool, org, 1000).await;
+    seed_cash_method(&pool, org).await;
+    let shift = open_shift_row(&pool, branch, teller).await;
+    grant_defaults(&pool).await;
+    for (resource, action) in [
+        ("orders", "create"),
+        ("payments", "create"),
+        ("kitchen_orders", "read"),
+        ("kitchen_orders", "update"),
+    ] {
+        grant(&pool, "teller", resource, action).await;
+    }
+    let t = token(teller, org, UserRole::Teller);
+    let w = token(waiter, org, UserRole::Waiter);
+    let table = seed_table(&pool, org, branch, None, "T1").await;
+
+    // Seat a party, then settle: checkout busses the table, it does not free it.
+    let tk = fire_on!(app, w, branch, item, table);
+    let resp = post_json!(
+        app,
+        t,
+        &format!("/open-tickets/{}/settle", tk.id),
+        serde_json::json!({ "shift_id": shift, "payment_method": "cash" })
+    );
+    assert_eq!(resp.status(), 200, "settle");
+    assert_eq!(table_status(&pool, table).await, "dirty");
+
+    // The envelope the POS actually queues — empty request, no branch.
+    let resp = post_json!(
+        app,
+        t,
+        "/sync/replay",
+        serde_json::json!({ "op": "clear_table", "teller_id": teller, "table_id": table, "request": {} })
+    );
+    assert_eq!(resp.status(), 200, "queued clear replays");
+    assert_eq!(table_status(&pool, table).await, "free");
+
+    // A lost ack replays it again; `free` -> `free` is a no-op, not a 409.
+    let resp = post_json!(
+        app,
+        t,
+        "/sync/replay",
+        serde_json::json!({ "op": "clear_table", "teller_id": teller, "table_id": table, "request": {} })
+    );
+    assert_eq!(resp.status(), 200, "replaying a clear is idempotent");
+    assert_eq!(table_status(&pool, table).await, "free");
+}
+
+/// A clear must never cross an org boundary, even though the op carries no
+/// branch of its own: the table is what resolves to one.
+#[sqlx::test]
+async fn replay_clear_cannot_reach_another_orgs_table(pool: PgPool) {
+    let app = app!(pool);
+    let org = seed_org(&pool).await;
+    let teller = seed_user(&pool, org, "teller").await;
+    grant_defaults(&pool).await;
+    let t = token(teller, org, UserRole::Teller);
+
+    let other = seed_org(&pool).await;
+    let other_branch = seed_branch(&pool, other).await;
+    let their_table = seed_table(&pool, other, other_branch, None, "T1").await;
+
+    let resp = post_json!(
+        app,
+        t,
+        "/sync/replay",
+        serde_json::json!({ "op": "clear_table", "teller_id": teller, "table_id": their_table, "request": {} })
+    );
+    assert!(
+        matches!(resp.status().as_u16(), 403 | 404),
+        "cross-org clear rejected, got {}",
+        resp.status()
+    );
+}
