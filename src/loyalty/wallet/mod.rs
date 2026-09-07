@@ -51,8 +51,19 @@ pub fn loyalty_base() -> Option<String> {
 
 /// Build both "add to wallet" links for a member.
 pub fn links_for(member: &MemberRow, settings: &LoyaltySettings) -> PassLinks {
+    // The API path, not a page path: this URL is fetched, not navigated to, and
+    // `/api/` is what nginx proxies to the backend. A site-relative path here
+    // hits the SPA fallback and hands the customer an HTML document that iOS
+    // quietly refuses to open.
     let apple_url = apple::is_configured()
-        .then(|| loyalty_base().map(|b| format!("{b}/pass/{}/apple.pkpass", member.member_token)))
+        .then(|| {
+            loyalty_base().map(|b| {
+                format!(
+                    "{b}/api/public/loyalty/pass/{}/apple.pkpass",
+                    member.member_token
+                )
+            })
+        })
         .flatten();
     let google_url = google::save_url(member, settings).unwrap_or_else(|e| {
         // A misconfigured issuer must not take the signup down with it.
@@ -104,4 +115,95 @@ async fn push_update_inner(pool: &PgPool, customer_id: Uuid) -> Result<(), AppEr
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Serialises the tests that read and write the wallet environment.
+///
+/// Env is process-global: two tests toggling `LOYALTY_APPLE_*` race, and the
+/// failure looks like a signing bug rather than a test-harness one. Every test
+/// in this module tree that touches those variables takes this first.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loyalty::model::MemberRow;
+    use uuid::Uuid;
+
+    fn member() -> MemberRow {
+        MemberRow {
+            id: Uuid::nil(),
+            org_id: Uuid::nil(),
+            name: "Ali".into(),
+            phone: "201000000001".into(),
+            member_token: "Mabcdefghijklmnopqrstuv".into(),
+            points_balance: 0,
+            visits_balance: 0,
+            lifetime_points: 0,
+            lifetime_visits: 0,
+            locale: "en".into(),
+            apple_serial: None,
+            apple_auth_token: None,
+            google_object_id: None,
+            pass_updated_at: None,
+            enrolled_at: chrono::Utc::now(),
+        }
+    }
+
+    /// The Apple link must be the API path, reachable through nginx's `/api/`
+    /// proxy — not a site-relative one.
+    ///
+    /// A page path falls through to the SPA fallback and hands the customer an
+    /// HTML document, which iOS refuses to open with no message at all. That is
+    /// indistinguishable from "the certificates are wrong", so it is worth a
+    /// test rather than a debugging session.
+    #[test]
+    fn the_apple_link_points_at_the_api_not_the_page() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: the lock above makes this the only thread touching the wallet
+        // environment for the duration.
+        unsafe {
+            std::env::set_var("PUBLIC_LOYALTY_BASE_URL", "https://loyalty.example.com");
+            std::env::set_var("LOYALTY_APPLE_PASS_TYPE_ID", "pass.example");
+            std::env::set_var("LOYALTY_APPLE_TEAM_ID", "TEAM123456");
+            std::env::set_var("LOYALTY_APPLE_CERT_PEM", "x");
+            std::env::set_var("LOYALTY_APPLE_KEY_PEM", "x");
+            std::env::set_var("LOYALTY_APPLE_WWDR_PEM", "x");
+        }
+        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let links = links_for(&member(), &s);
+        assert_eq!(
+            links.apple_url.as_deref(),
+            Some(
+                "https://loyalty.example.com/api/public/loyalty/pass/\
+                 Mabcdefghijklmnopqrstuv/apple.pkpass"
+                    .replace(' ', "")
+                    .as_str()
+            )
+        );
+        assert!(links.any);
+
+        // With no base URL there is nothing to link to, and offering a dead
+        // button is worse than offering the QR fallback.
+        unsafe { std::env::remove_var("PUBLIC_LOYALTY_BASE_URL") };
+        assert!(links_for(&member(), &s).apple_url.is_none());
+
+        // ...and with nothing configured at all, no buttons: the page shows the
+        // member's QR instead, which still works at the till.
+        unsafe {
+            std::env::remove_var("LOYALTY_APPLE_PASS_TYPE_ID");
+            std::env::remove_var("LOYALTY_APPLE_TEAM_ID");
+            std::env::remove_var("LOYALTY_APPLE_CERT_PEM");
+            std::env::remove_var("LOYALTY_APPLE_KEY_PEM");
+            std::env::remove_var("LOYALTY_APPLE_WWDR_PEM");
+        }
+        let bare = links_for(&member(), &s);
+        assert!(bare.apple_url.is_none());
+        assert!(!bare.any, "no wallet configured means the QR fallback, not a dead button");
+    }
+
+    // Deliberately ONE test, not two: these read process-global environment,
+    // and two tests mutating it race in the same process.
+
 }

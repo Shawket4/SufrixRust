@@ -442,9 +442,15 @@ mod tests {
         }
     }
 
+    /// Take the wallet env lock for the duration of a test. Held by every test
+    /// here, because these variables are process-global.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        super::super::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn configured() {
-        // SAFETY: single-threaded test process; these are read, never mutated,
-        // by the code under test.
+        // SAFETY: callers hold `env_guard`, so this is the only thread touching
+        // the wallet environment.
         unsafe {
             std::env::set_var("LOYALTY_APPLE_PASS_TYPE_ID", "pass.cloud.madar-pos.loyalty");
             std::env::set_var("LOYALTY_APPLE_TEAM_ID", "TEAM123456");
@@ -453,6 +459,7 @@ mod tests {
 
     #[test]
     fn balance_is_primary_and_progress_is_secondary() {
+        let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
@@ -466,6 +473,7 @@ mod tests {
 
     #[test]
     fn a_stamp_card_is_explained_in_stamps_not_pounds() {
+        let _guard = env_guard();
         configured();
         let mut s = LoyaltySettings::defaults(Uuid::nil(), None);
         s.mode = "visits".into();
@@ -488,6 +496,7 @@ mod tests {
 
     #[test]
     fn the_barcode_carries_the_token_not_the_id() {
+        let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
@@ -500,6 +509,7 @@ mod tests {
 
     #[test]
     fn branch_coordinates_become_lock_screen_locations() {
+        let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
         let locs = vec![PassLocation {
@@ -527,6 +537,7 @@ mod tests {
 
     #[test]
     fn a_pass_is_refused_rather_than_served_unsigned() {
+        let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
@@ -542,6 +553,7 @@ mod tests {
 
     #[test]
     fn a_signed_pass_is_a_zip_of_exactly_the_three_files_ios_expects() {
+        let _guard = env_guard();
         configured();
         // A throwaway self-signed cert stands in for the Pass Type ID one: it
         // exercises the real PKCS#7 path (which is where the bugs are), and iOS
