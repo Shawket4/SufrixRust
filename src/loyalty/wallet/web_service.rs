@@ -49,8 +49,7 @@ async fn authenticated_member(
         .ok_or_else(|| AppError::Unauthorized("Missing pass token".into()))?;
 
     // The serial IS the member id (see `apple::pass_json`).
-    let id = Uuid::parse_str(serial)
-        .map_err(|_| AppError::NotFound("No such pass".into()))?;
+    let id = Uuid::parse_str(serial).map_err(|_| AppError::NotFound("No such pass".into()))?;
     let member = model::find_by_id(pool, id)
         .await?
         .ok_or_else(|| AppError::NotFound("No such pass".into()))?;

@@ -21,6 +21,7 @@ use sqlx::PgPool;
 use crate::errors::AppError;
 use crate::loyalty::model::MemberRow;
 use crate::loyalty::settings::LoyaltySettings;
+use crate::orgs::branding::OrgBrand;
 
 const SAVE_URL_PREFIX: &str = "https://pay.google.com/gp/v/save/";
 const WALLET_API: &str = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -37,12 +38,10 @@ fn sa_email() -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
-fn sa_key() -> Option<String> {
-    std::env::var("LOYALTY_GOOGLE_SA_KEY")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        // A PEM in an env var almost always arrives with escaped newlines.
-        .map(|s| s.replace("\\n", "\n"))
+/// Accepts `LOYALTY_GOOGLE_SA_KEY_FILE` (a path) or `LOYALTY_GOOGLE_SA_KEY`
+/// (inline PEM). Prefer the file: see [`super::key_material`].
+fn sa_key() -> Option<Vec<u8>> {
+    super::key_material("LOYALTY_GOOGLE_SA_KEY")
 }
 
 pub fn is_configured() -> bool {
@@ -79,10 +78,14 @@ struct SaveClaims {
 ///
 /// One class per ORG, not per programme: it carries the tenant's identity, and
 /// a customer looking at their wallet should see the shop's name on the card.
+/// The brand comes from the ORGANISATION, like Apple's. It used to be read from
+/// `loyalty_settings`, whose UI was removed when branding moved to the org — so
+/// the class carried no logo and no colour, and every Android card came back in
+/// Google's default white.
 pub fn loyalty_class(
     issuer: &str,
     org_id: uuid::Uuid,
-    org_name: &str,
+    brand: &OrgBrand,
     settings: &LoyaltySettings,
 ) -> serde_json::Value {
     let mut class = json!({
@@ -90,18 +93,22 @@ pub fn loyalty_class(
         // Whose card this is. Always set, even when nothing else has been
         // configured — falling back to the programme name rather than leaving a
         // wallet entry with no owner on it.
-        "issuerName": if org_name.trim().is_empty() { settings.program_name.as_str() } else { org_name },
+        "issuerName": if brand.name.trim().is_empty() { settings.program_name.as_str() } else { brand.name.as_str() },
         "programName": settings.program_name,
         // `UNDER_REVIEW` is what a class inserted through a save JWT must carry;
         // Google promotes it when the issuer account is approved. `APPROVED`
         // here is rejected outright.
         "reviewStatus": "UNDER_REVIEW",
+        // Google FETCHES this, so it must be absolute and publicly reachable —
+        // unlike Apple's, which is packed into the archive as bytes.
+        "hexBackgroundColor": brand.palette.background,
     });
-    if let Some(logo) = settings.pass_logo_url.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(logo) = brand
+        .logo_url
+        .as_deref()
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+    {
         class["programLogo"] = json!({ "sourceUri": { "uri": logo } });
-    }
-    if let Some(bg) = settings.pass_background_color.as_deref() {
-        class["hexBackgroundColor"] = json!(bg);
     }
     class
 }
@@ -157,32 +164,49 @@ pub fn loyalty_object(
     })
 }
 
-/// A stamp card drawn in text, when the target is small enough to read as one.
+/// The stepper, drawn in text, when the target is small enough to read as one.
 ///
-/// "●●●○○" says "three of five orders" at a glance in a way "3 / 5" does not —
-/// it is the paper punch card everyone already understands. Above
-/// [`MAX_STAMPS`] the dots stop being countable and become noise, so a points
-/// programme (100, 250…) keeps the plain figure.
-const MAX_STAMPS: i32 = 12;
+/// `●─●─●─○─○` rather than `●●●○○`. Loose dots are a paper punch card: they say
+/// how many, and nothing about direction. Joining them makes a JOURNEY — the
+/// eye reads left to right, sees where it is and how far is left, which is the
+/// question a customer actually asks of a stamp card. It is the same object the
+/// web card draws with real geometry (`stamp-row.tsx`), reduced to the only
+/// thing a Wallet field can hold, which is a line of text.
+///
+/// The two glyphs are chosen to survive a pass: `●`/`○` (U+25CF/U+25CB) and the
+/// box-drawing `─` (U+2500) are in the system fonts on both platforms, and the
+/// connector is the one character designed to meet its neighbours with no gap.
+/// State is never carried by the drawing alone — [`progress_line`] always puts
+/// the figures beside it, so a font that substitutes still reads.
+///
+/// Above [`MAX_STEPS`] the steps stop being countable and become texture, so a
+/// points programme (100, 250…) keeps the plain figure. The cap matches the web
+/// card's, so the card in the phone and the card on the page never disagree.
+const MAX_STEPS: i32 = 12;
 
-pub fn stamps(balance: i32, threshold: i32) -> Option<String> {
-    if threshold <= 0 || threshold > MAX_STAMPS {
+pub fn stepper(balance: i32, threshold: i32) -> Option<String> {
+    if threshold <= 0 || threshold > MAX_STEPS {
         return None;
     }
     let filled = balance.clamp(0, threshold);
-    Some(
-        "●".repeat(filled as usize) + &"○".repeat((threshold - filled).max(0) as usize),
-    )
+    let step = |i: i32| if i < filled { "●" } else { "○" };
+    let mut out = String::from(step(0));
+    for i in 1..threshold {
+        out.push('\u{2500}');
+        out.push_str(step(i));
+    }
+    Some(out)
 }
 
 /// "30 / 100 to your next reward", or the earned line once it is reached. A
-/// small target gets the punch card instead of the arithmetic.
+/// small target gets the stepper as well as the arithmetic, never instead of
+/// it: the drawing is the glance, the figures are the fact.
 pub fn progress_line(balance: i32, threshold: i32) -> String {
     if threshold > 0 && balance >= threshold {
         return "Reward earned — ask at the counter".to_string();
     }
-    match stamps(balance, threshold) {
-        Some(dots) => format!("{dots}   {balance} / {threshold}"),
+    match stepper(balance, threshold) {
+        Some(steps) => format!("{steps}   {balance} / {threshold}"),
         None => format!("{balance} / {threshold} to your next reward"),
     }
 }
@@ -201,7 +225,7 @@ pub fn balance_label(mode: crate::loyalty::earn::Mode) -> &'static str {
 pub fn save_url(
     member: &MemberRow,
     settings: &LoyaltySettings,
-    org_name: &str,
+    brand: &OrgBrand,
     locations: &[super::PassLocation],
 ) -> Result<Option<String>, AppError> {
     let (Some(issuer), Some(email), Some(key)) = (issuer_id(), sa_email(), sa_key()) else {
@@ -216,11 +240,11 @@ pub fn save_url(
         // points at it, and sending them together lets Google create it on the
         // first save rather than needing a separate provisioning step.
         payload: json!({
-            "loyaltyClasses": [loyalty_class(&issuer, member.org_id, org_name, settings)],
+            "loyaltyClasses": [loyalty_class(&issuer, member.org_id, brand, settings)],
             "loyaltyObjects": [loyalty_object(&issuer, member, settings, locations)],
         }),
     };
-    let encoding = EncodingKey::from_rsa_pem(key.as_bytes()).map_err(|e| {
+    let encoding = EncodingKey::from_rsa_pem(&key).map_err(|e| {
         tracing::error!(error = %e, "LOYALTY_GOOGLE_SA_KEY is not a usable RSA PEM");
         AppError::ServiceUnavailable("Google Wallet key is not usable".into())
     })?;
@@ -244,7 +268,7 @@ async fn access_token() -> Result<String, AppError> {
         "iat": now,
         "exp": now + 3600,
     });
-    let encoding = EncodingKey::from_rsa_pem(key.as_bytes()).map_err(|_| AppError::Internal)?;
+    let encoding = EncodingKey::from_rsa_pem(&key).map_err(|_| AppError::Internal)?;
     let assertion = jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &encoding)
         .map_err(|_| AppError::Internal)?;
 
@@ -326,25 +350,64 @@ mod tests {
         // Google refuses an object whose class does not exist, and the customer
         // sees only a dead link. The class must ride along.
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let class = loyalty_class("3388000000000000000", uuid::Uuid::nil(), "RUE Coffee", &s);
+        let brand = OrgBrand {
+            name: "RUE Coffee".into(),
+            logo_url: Some("https://api.madar-pos.cloud/api/uploads/logos/rue.png".into()),
+            palette: crate::orgs::branding::Palette {
+                background: "#7B1E3A".into(),
+                foreground: "#EFF3F4".into(),
+                accent: "#C8607F".into(),
+            },
+        };
+        let class = loyalty_class("3388000000000000000", uuid::Uuid::nil(), &brand, &s);
         assert_eq!(class["issuerName"], "RUE Coffee");
         assert_eq!(class["reviewStatus"], "UNDER_REVIEW");
         assert_eq!(
             class["id"],
             format!("3388000000000000000.madar-{}", uuid::Uuid::nil())
         );
+        // The shop's brand reaches the Android card. These used to be read from
+        // `loyalty_settings`, which nothing writes any more, so the class went
+        // out with no logo and no colour.
+        assert_eq!(class["hexBackgroundColor"], "#7B1E3A");
+        assert_eq!(
+            class["programLogo"]["sourceUri"]["uri"],
+            "https://api.madar-pos.cloud/api/uploads/logos/rue.png"
+        );
+    }
+
+    #[test]
+    fn google_is_never_pointed_at_a_relative_logo() {
+        // Google FETCHES the logo from its own servers, so a site-relative path
+        // resolves against nothing. Better no logo than a broken one.
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let brand = OrgBrand {
+            name: "RUE".into(),
+            logo_url: Some("/api/uploads/logos/rue.png".into()),
+            ..OrgBrand::default()
+        };
+        let class = loyalty_class("338", uuid::Uuid::nil(), &brand, &s);
+        assert!(class.get("programLogo").is_none());
+        // The colour still lands — it needs no fetching.
+        assert_eq!(
+            class["hexBackgroundColor"],
+            crate::orgs::branding::MADAR_TEAL
+        );
     }
 
     #[test]
     fn a_nameless_org_still_gets_an_issuer_on_the_card() {
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let class = loyalty_class("338", uuid::Uuid::nil(), "  ", &s);
+        let class = loyalty_class("338", uuid::Uuid::nil(), &OrgBrand::default(), &s);
         assert_eq!(class["issuerName"], s.program_name);
     }
 
     #[test]
     fn progress_counts_down_then_announces() {
         assert_eq!(progress_line(30, 100), "30 / 100 to your next reward");
+        // The stepper never replaces the figures — a font that substitutes a
+        // glyph must still leave a readable card.
+        assert_eq!(progress_line(3, 5), "●─●─●─○─○   3 / 5");
         assert_eq!(
             progress_line(100, 100),
             "Reward earned — ask at the counter"
@@ -353,6 +416,25 @@ mod tests {
             progress_line(130, 100),
             "Reward earned — ask at the counter"
         );
+    }
+
+    #[test]
+    fn the_stepper_joins_its_steps_and_knows_when_to_stop() {
+        // Joined, so it reads as a journey rather than a handful of dots.
+        assert_eq!(stepper(3, 5).as_deref(), Some("●─●─●─○─○"));
+        assert_eq!(stepper(0, 3).as_deref(), Some("○─○─○"));
+        assert_eq!(stepper(3, 3).as_deref(), Some("●─●─●"));
+        // A single step has nothing to join to.
+        assert_eq!(stepper(0, 1).as_deref(), Some("○"));
+        // Clamped both ways: a redemption leaves a remainder and an adjustment
+        // can overshoot; neither should draw a broken row.
+        assert_eq!(stepper(9, 3).as_deref(), Some("●─●─●"));
+        assert_eq!(stepper(-4, 3).as_deref(), Some("○─○─○"));
+        // Past the cap the steps stop being countable, so the figures stand alone.
+        assert_eq!(stepper(30, 100), None);
+        assert_eq!(stepper(1, MAX_STEPS + 1), None);
+        assert!(stepper(1, MAX_STEPS).is_some());
+        assert_eq!(stepper(1, 0), None);
     }
 
     #[test]

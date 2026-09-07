@@ -34,39 +34,135 @@ use super::google::progress_line;
 /// ships. Every entry here MUST be hashed into `manifest.json` — an
 /// unhashed file in the archive invalidates the signature.
 const PASS_IMAGES: &[(&str, &[u8])] = &[
-    ("icon.png", include_bytes!("../../../static/wallet/icon.png")),
-    ("icon@2x.png", include_bytes!("../../../static/wallet/icon@2x.png")),
-    ("icon@3x.png", include_bytes!("../../../static/wallet/icon@3x.png")),
-    ("logo.png", include_bytes!("../../../static/wallet/logo.png")),
-    ("logo@2x.png", include_bytes!("../../../static/wallet/logo@2x.png")),
-    ("logo@3x.png", include_bytes!("../../../static/wallet/logo@3x.png")),
+    (
+        "icon.png",
+        include_bytes!("../../../static/wallet/icon.png"),
+    ),
+    (
+        "icon@2x.png",
+        include_bytes!("../../../static/wallet/icon@2x.png"),
+    ),
+    (
+        "icon@3x.png",
+        include_bytes!("../../../static/wallet/icon@3x.png"),
+    ),
+    (
+        "logo.png",
+        include_bytes!("../../../static/wallet/logo.png"),
+    ),
+    (
+        "logo@2x.png",
+        include_bytes!("../../../static/wallet/logo@2x.png"),
+    ),
+    (
+        "logo@3x.png",
+        include_bytes!("../../../static/wallet/logo@3x.png"),
+    ),
 ];
+
+/// The organisation's identity, as the PASS must carry it.
+///
+/// A pass is a file: it cannot reference a logo by URL the way the web card
+/// does, so the image has to be resized and packed into the archive. And its
+/// colours cannot come from `loyalty_settings` — that is where they used to
+/// live, before branding moved to the organisation, which is exactly why a
+/// freshly downloaded pass kept coming back in Apple's default grey.
+pub struct PassBrand {
+    pub org_name: String,
+    pub background: String,
+    pub foreground: String,
+    pub label: String,
+    /// The org's logo, already sized for the pass. Madar's is used when the
+    /// shop has none.
+    pub images: Vec<(String, Vec<u8>)>,
+}
+
+impl Default for PassBrand {
+    fn default() -> Self {
+        let p = crate::orgs::branding::Palette::default();
+        Self {
+            org_name: String::new(),
+            background: p.background,
+            foreground: p.foreground,
+            label: p.accent,
+            images: PASS_IMAGES
+                .iter()
+                .map(|(n, b)| ((*n).to_string(), b.to_vec()))
+                .collect(),
+        }
+    }
+}
+
+/// Resize the org's logo into the image set a pass needs.
+///
+/// Apple's sizes, and both are required: `icon` (29pt, shown in notifications
+/// and on the lock screen — a pass without it is refused outright) and `logo`
+/// (up to 160×50pt in the header). Aspect ratio is preserved for the logo and
+/// the icon is squared, because a stretched mark is worse than Madar's.
+fn images_from_logo(bytes: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let mut out = Vec::with_capacity(6);
+    let encode = |im: image::DynamicImage| -> Option<Vec<u8>> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        im.write_to(&mut buf, image::ImageFormat::Png).ok()?;
+        Some(buf.into_inner())
+    };
+    for (name, px) in [
+        ("icon.png", 29u32),
+        ("icon@2x.png", 58),
+        ("icon@3x.png", 87),
+    ] {
+        out.push((
+            name.to_string(),
+            encode(img.resize_to_fill(px, px, image::imageops::FilterType::Lanczos3))?,
+        ));
+    }
+    for (name, w, h) in [
+        ("logo.png", 160u32, 50u32),
+        ("logo@2x.png", 320, 100),
+        ("logo@3x.png", 480, 150),
+    ] {
+        out.push((
+            name.to_string(),
+            encode(img.resize(w, h, image::imageops::FilterType::Lanczos3))?,
+        ));
+    }
+    Some(out)
+}
+
+/// Dress a pass in an organisation's brand.
+///
+/// The logo is read from DISK, not fetched: uploads are written locally, so the
+/// file is already there — no network call while a customer waits, and no
+/// server-side request to an address someone else supplied.
+pub fn pass_brand(brand: &crate::orgs::branding::OrgBrand) -> PassBrand {
+    let d = PassBrand::default();
+    let images = brand
+        .logo_url
+        .as_deref()
+        .and_then(|url| url.rsplit_once("/logos/").map(|(_, f)| f.to_string()))
+        .and_then(|file| {
+            let dir = std::env::var("UPLOADS_DIR").unwrap_or_else(|_| "./uploads".into());
+            std::fs::read(format!("{dir}/logos/{file}")).ok()
+        })
+        .and_then(|bytes| images_from_logo(&bytes))
+        .unwrap_or(d.images);
+
+    PassBrand {
+        org_name: brand.name.clone(),
+        background: brand.palette.background.clone(),
+        foreground: brand.palette.foreground.clone(),
+        label: brand.palette.accent.clone(),
+        images,
+    }
+}
 
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.trim().is_empty())
 }
 
-/// Read PEM material from `KEY_FILE` (a path) or `KEY` (inline).
-///
-/// The file form is the one to use in production: a private key in an env var
-/// has to have its newlines escaped, shows up in `docker inspect`, and lands in
-/// any process listing that dumps the environment. The inline form stays for
-/// local development and tests.
-fn pem_material(key: &str) -> Option<Vec<u8>> {
-    if let Some(path) = env_nonempty(&format!("{key}_FILE")) {
-        return match std::fs::read(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(e) => {
-                // A configured-but-unreadable key is an operator error worth
-                // shouting about — silently falling back to "no Apple wallet"
-                // would look like it was never configured.
-                tracing::error!(path = %path, error = %e, "cannot read {key}_FILE");
-                None
-            }
-        };
-    }
-    env_nonempty(key).map(|s| s.replace("\\n", "\n").into_bytes())
-}
+/// Shared with Google — see [`super::key_material`].
+use super::key_material as pem_material;
 
 pub fn pass_type_id() -> Option<String> {
     env_nonempty("LOYALTY_APPLE_PASS_TYPE_ID")
@@ -96,6 +192,7 @@ pub fn pass_json(
     settings: &LoyaltySettings,
     locations: &[PassLocation],
     rewards: &[String],
+    brand: &PassBrand,
 ) -> Result<serde_json::Value, AppError> {
     let (Some(pass_type), Some(team)) = (pass_type_id(), team_id()) else {
         return Err(AppError::ServiceUnavailable(
@@ -157,7 +254,10 @@ pub fn pass_json(
         // Stable per member: re-issuing must update the card already in the
         // customer's wallet, never add a second one.
         "serialNumber": member.id.to_string(),
-        "organizationName": program,
+        // The SHOP's name, not the programme's. This is the line a customer
+        // sees in their wallet list and on the lock screen; "Rewards" there
+        // tells them nothing about whose card it is.
+        "organizationName": if brand.org_name.trim().is_empty() { program.as_str() } else { brand.org_name.as_str() },
         "description": format!("{program} card"),
         // The web service that serves updates. Apple only calls it when the
         // pass carries an auth token, which is minted at signup.
@@ -188,19 +288,20 @@ pub fn pass_json(
         }]
     });
 
-    if let Some(base) = super::loyalty_base() {
-        // Apple appends `/v1/...` itself, so this is the scope's parent.
-        pass["webServiceURL"] = json!(format!("{base}/api/wallet"));
+    // Apple appends `/v1/...` itself, so this is the scope's parent. Without it
+    // the device never registers and the pass can never update — which is
+    // permanent for every pass already issued, so it is worth falling back to
+    // the API's own origin rather than depending on one variable.
+    if let Some(url) = super::web_service_url() {
+        pass["webServiceURL"] = json!(url);
     }
-    if let Some(c) = &settings.pass_background_color {
-        pass["backgroundColor"] = json!(hex_to_rgb_css(c));
-    }
-    if let Some(c) = &settings.pass_foreground_color {
-        pass["foregroundColor"] = json!(hex_to_rgb_css(c));
-    }
-    if let Some(c) = &settings.pass_label_color {
-        pass["labelColor"] = json!(hex_to_rgb_css(c));
-    }
+    // From the ORGANISATION's derived palette. These used to read
+    // `loyalty_settings`, which stopped being written when branding moved to
+    // the org — so every pass came back in Apple's default grey however the
+    // shop's card looked on the web.
+    pass["backgroundColor"] = json!(hex_to_rgb_css(&brand.background));
+    pass["foregroundColor"] = json!(hex_to_rgb_css(&brand.foreground));
+    pass["labelColor"] = json!(hex_to_rgb_css(&brand.label));
     if !locations.is_empty() {
         pass["locations"] = json!(
             locations
@@ -256,8 +357,10 @@ fn sign_manifest(manifest: &[u8]) -> Result<Vec<u8>, AppError> {
     let missing = |what: &str| {
         AppError::ServiceUnavailable(format!("Apple Wallet is not configured: {what} is missing"))
     };
-    let cert_pem = pem_material("LOYALTY_APPLE_CERT_PEM").ok_or_else(|| missing("the certificate"))?;
-    let key_pem = pem_material("LOYALTY_APPLE_KEY_PEM").ok_or_else(|| missing("the private key"))?;
+    let cert_pem =
+        pem_material("LOYALTY_APPLE_CERT_PEM").ok_or_else(|| missing("the certificate"))?;
+    let key_pem =
+        pem_material("LOYALTY_APPLE_KEY_PEM").ok_or_else(|| missing("the private key"))?;
     let wwdr_pem = pem_material("LOYALTY_APPLE_WWDR_PEM")
         .ok_or_else(|| missing("the Apple WWDR intermediate"))?;
 
@@ -288,7 +391,10 @@ fn sign_manifest(manifest: &[u8]) -> Result<Vec<u8>, AppError> {
 
 /// Assemble the `.pkpass` archive: `pass.json`, its manifest of SHA-1 digests,
 /// and the detached signature over that manifest.
-pub fn build_pkpass(pass: &serde_json::Value) -> Result<Vec<u8>, AppError> {
+pub fn build_pkpass(
+    pass: &serde_json::Value,
+    images: &[(String, Vec<u8>)],
+) -> Result<Vec<u8>, AppError> {
     use sha1::{Digest, Sha1};
     use std::io::Write;
 
@@ -305,14 +411,14 @@ pub fn build_pkpass(pass: &serde_json::Value) -> Result<Vec<u8>, AppError> {
     // hash, invalidates the signature and iOS refuses the pass without saying
     // why.
     let mut payload: Vec<(&str, &[u8])> = vec![("pass.json", pass_bytes.as_slice())];
-    payload.extend_from_slice(PASS_IMAGES);
+    payload.extend(images.iter().map(|(n, b)| (n.as_str(), b.as_slice())));
 
     let mut manifest_map = serde_json::Map::new();
     for (name, bytes) in &payload {
         manifest_map.insert((*name).to_string(), json!(digest(bytes)));
     }
-    let manifest =
-        serde_json::to_vec(&serde_json::Value::Object(manifest_map)).map_err(|_| AppError::Internal)?;
+    let manifest = serde_json::to_vec(&serde_json::Value::Object(manifest_map))
+        .map_err(|_| AppError::Internal)?;
     let signature = sign_manifest(&manifest)?;
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -322,11 +428,10 @@ pub fn build_pkpass(pass: &serde_json::Value) -> Result<Vec<u8>, AppError> {
         // care, so the simpler archive is the better one to debug.
         let opts: zip::write::FileOptions<'_, ()> =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        for (name, bytes) in payload
-            .iter()
-            .copied()
-            .chain([("manifest.json", manifest.as_slice()), ("signature", signature.as_slice())])
-        {
+        for (name, bytes) in payload.iter().copied().chain([
+            ("manifest.json", manifest.as_slice()),
+            ("signature", signature.as_slice()),
+        ]) {
             zip.start_file(name, opts).map_err(|_| AppError::Internal)?;
             zip.write_all(bytes).map_err(|_| AppError::Internal)?;
         }
@@ -355,8 +460,10 @@ pub async fn build_pass_for(pool: &PgPool, member: &MemberRow) -> Result<Vec<u8>
             .into_iter()
             .map(|r| format!("{} — {} {}", r.name, r.cost_amount, r.cost_currency))
             .collect();
-    let pass = pass_json(member, &settings, &locations, &rewards)?;
-    build_pkpass(&pass)
+    let org = crate::orgs::branding::load(pool, member.org_id).await?;
+    let brand = pass_brand(&org);
+    let pass = pass_json(member, &settings, &locations, &rewards, &brand)?;
+    build_pkpass(&pass, &brand.images)
 }
 
 /// Tell every device holding this member's pass to come back for a new copy.
@@ -441,7 +548,9 @@ mod tests {
     /// Take the wallet env lock for the duration of a test. Held by every test
     /// here, because these variables are process-global.
     fn env_guard() -> std::sync::MutexGuard<'static, ()> {
-        super::super::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        super::super::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     fn configured() {
@@ -458,7 +567,7 @@ mod tests {
         let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let p = pass_json(&member(), &s, &[], &[]).unwrap();
+        let p = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
         assert_eq!(p["storeCard"]["primaryFields"][0]["value"], 30);
         assert_eq!(
             p["storeCard"]["secondaryFields"][0]["value"],
@@ -474,13 +583,17 @@ mod tests {
         let mut s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         s.mode = "visits".into();
         s.default_reward_cost = 5;
-        let p = pass_json(&member(), &s, &[], &[]).unwrap();
+        let p = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
         // The stamps balance leads, not the points one.
         assert_eq!(p["storeCard"]["primaryFields"][0]["value"], 3);
         assert_eq!(p["storeCard"]["primaryFields"][0]["label"], "Orders");
-        // A stamp card reads as a punch card, not as arithmetic: five orders
-        // is few enough to count at a glance.
-        assert_eq!(p["storeCard"]["secondaryFields"][0]["value"], "●●●○○   3 / 5");
+        // A stamp card reads as a STEPPER, not as arithmetic: five orders is
+        // few enough to count at a glance, and joining the steps shows the
+        // direction of travel the way loose dots do not.
+        assert_eq!(
+            p["storeCard"]["secondaryFields"][0]["value"],
+            "●─●─●─○─○   3 / 5"
+        );
         let how = p["storeCard"]["backFields"][0]["value"].as_str().unwrap();
         assert!(how.contains("stamp"), "{how}");
         assert!(
@@ -490,11 +603,82 @@ mod tests {
     }
 
     #[test]
+    fn the_pass_wears_the_shop_and_not_apple_default_grey() {
+        configured();
+        let _guard = env_guard();
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let brand = PassBrand {
+            org_name: "RUE Coffee".into(),
+            background: "#7B1E3A".into(),
+            foreground: "#EFF3F4".into(),
+            label: "#C8607F".into(),
+            ..PassBrand::default()
+        };
+        let p = pass_json(&member(), &s, &[], &[], &brand).unwrap();
+
+        // The colours reach the pass. They used to be read from
+        // `loyalty_settings`, which stopped being written when branding moved
+        // to the organisation — so every pass came back grey however the card
+        // looked on the web, and a fresh download looked identical to an old one.
+        assert_eq!(p["backgroundColor"], "rgb(123, 30, 58)");
+        assert_eq!(p["foregroundColor"], "rgb(239, 243, 244)");
+        assert_eq!(p["labelColor"], "rgb(200, 96, 127)");
+
+        // And the SHOP's name is what a customer sees in their wallet list,
+        // not the programme's.
+        assert_eq!(p["organizationName"], "RUE Coffee");
+    }
+
+    #[test]
+    fn a_nameless_org_falls_back_to_the_programme_rather_than_blank() {
+        configured();
+        let _guard = env_guard();
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let p = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
+        assert_eq!(p["organizationName"], s.program_name);
+        // Madar's palette, not an absent one — a pass with no colours is grey.
+        assert_eq!(p["backgroundColor"], "rgb(13, 98, 115)");
+    }
+
+    #[test]
+    fn a_shop_logo_becomes_the_full_apple_image_set() {
+        // Apple needs icon and logo at three scales each, inside the archive —
+        // a pass cannot reference an image by URL the way the web card does.
+        let mut img = image::RgbaImage::new(400, 120);
+        for px in img.pixels_mut() {
+            *px = image::Rgba([123, 30, 58, 255]);
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+
+        let set = images_from_logo(&png.into_inner()).expect("a real PNG resizes");
+        let names: Vec<&str> = set.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "icon.png",
+                "icon@2x.png",
+                "icon@3x.png",
+                "logo.png",
+                "logo@2x.png",
+                "logo@3x.png"
+            ]
+        );
+        assert!(set.iter().all(|(_, b)| !b.is_empty()));
+
+        // Junk falls back rather than shipping a pass with no icon, which iOS
+        // refuses outright.
+        assert!(images_from_logo(b"not an image").is_none());
+    }
+
+    #[test]
     fn the_barcode_carries_the_token_not_the_id() {
         let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let p = pass_json(&member(), &s, &[], &[]).unwrap();
+        let p = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
         assert_eq!(p["barcodes"][0]["message"], "Mabcdefghijklmnopqrstuv");
         assert_eq!(p["barcodes"][0]["format"], "PKBarcodeFormatQR");
         // The member id must never be the scannable value — it is guessable
@@ -512,7 +696,7 @@ mod tests {
             longitude: 31.2357,
             name: "Zamalek".into(),
         }];
-        let p = pass_json(&member(), &s, &locs, &[]).unwrap();
+        let p = pass_json(&member(), &s, &locs, &[], &PassBrand::default()).unwrap();
         assert_eq!(p["locations"][0]["latitude"], 30.0444);
         assert!(
             p["locations"][0]["relevantText"]
@@ -535,11 +719,11 @@ mod tests {
         let _guard = env_guard();
         configured();
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let p = pass_json(&member(), &s, &[], &[]).unwrap();
+        let p = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
         // With no certificate configured, building an archive must fail loudly.
         // An unsigned .pkpass is rejected by iOS with no explanation at all, so
         // serving one would look to the customer like a broken link.
-        let err = build_pkpass(&p).unwrap_err();
+        let err = build_pkpass(&p, &PassBrand::default().images).unwrap_err();
         assert!(
             matches!(err, AppError::ServiceUnavailable(_)),
             "an unconfigured signer is a 503 the operator can read, not a 500"
@@ -567,7 +751,8 @@ mod tests {
             .unwrap();
         b.set_not_after(&openssl::asn1::Asn1Time::days_from_now(1).unwrap())
             .unwrap();
-        b.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
+        b.sign(&key, openssl::hash::MessageDigest::sha256())
+            .unwrap();
         let cert = b.build();
 
         // SAFETY: single-threaded test process.
@@ -587,8 +772,8 @@ mod tests {
         }
 
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
-        let pass = pass_json(&member(), &s, &[], &[]).unwrap();
-        let bytes = build_pkpass(&pass).unwrap();
+        let pass = pass_json(&member(), &s, &[], &[], &PassBrand::default()).unwrap();
+        let bytes = build_pkpass(&pass, &PassBrand::default().images).unwrap();
 
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut names: Vec<String> = (0..zip.len())

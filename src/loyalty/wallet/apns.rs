@@ -37,7 +37,9 @@ fn env_nonempty(key: &str) -> Option<String> {
 fn key_material() -> Option<Vec<u8>> {
     if let Some(path) = env_nonempty("LOYALTY_APNS_KEY_FILE") {
         return std::fs::read(&path)
-            .map_err(|e| tracing::error!(path = %path, error = %e, "cannot read LOYALTY_APNS_KEY_FILE"))
+            .map_err(
+                |e| tracing::error!(path = %path, error = %e, "cannot read LOYALTY_APNS_KEY_FILE"),
+            )
             .ok();
     }
     env_nonempty("LOYALTY_APNS_KEY").map(|s| s.replace("\\n", "\n").into_bytes())
@@ -96,7 +98,8 @@ fn provider_token() -> Result<String, AppError> {
         tracing::error!(error = %e, "LOYALTY_APNS_KEY is not a usable EC private key (.p8)");
         AppError::ServiceUnavailable("APNs key is not usable".into())
     })?;
-    let token = jsonwebtoken::encode(&header, &claims, &encoding).map_err(|_| AppError::Internal)?;
+    let token =
+        jsonwebtoken::encode(&header, &claims, &encoding).map_err(|_| AppError::Internal)?;
 
     if let Ok(mut guard) = CACHED.lock() {
         *guard = Some((token.clone(), Instant::now()));

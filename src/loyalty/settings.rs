@@ -51,10 +51,6 @@ pub struct LoyaltySettings {
     /// Verify the signup phone by WhatsApp code, like bookings and ordering.
     pub require_otp: bool,
 
-    pub pass_background_color: Option<String>,
-    pub pass_foreground_color: Option<String>,
-    pub pass_label_color: Option<String>,
-    pub pass_logo_url: Option<String>,
     pub terms: Option<String>,
     pub terms_ar: Option<String>,
 }
@@ -73,10 +69,6 @@ impl LoyaltySettings {
             earn_include_tax: false,
             default_reward_cost: 100,
             require_otp: true,
-            pass_background_color: None,
-            pass_foreground_color: None,
-            pass_label_color: None,
-            pass_logo_url: None,
             terms: None,
             terms_ar: None,
         }
@@ -116,23 +108,8 @@ impl LoyaltySettings {
         if self.program_name.trim().is_empty() {
             return Err(AppError::BadRequest("program_name is required".into()));
         }
-        for (label, c) in [
-            ("pass_background_color", &self.pass_background_color),
-            ("pass_foreground_color", &self.pass_foreground_color),
-            ("pass_label_color", &self.pass_label_color),
-        ] {
-            if let Some(c) = c
-                && !is_hex_color(c)
-            {
-                return Err(AppError::BadRequest(format!("{label} must be #RRGGBB")));
-            }
-        }
         Ok(())
     }
-}
-
-fn is_hex_color(s: &str) -> bool {
-    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[derive(sqlx::FromRow)]
@@ -148,18 +125,13 @@ struct Row {
     earn_include_tax: bool,
     default_reward_cost: i32,
     require_otp: bool,
-    pass_background_color: Option<String>,
-    pass_foreground_color: Option<String>,
-    pass_label_color: Option<String>,
-    pass_logo_url: Option<String>,
     terms: Option<String>,
     terms_ar: Option<String>,
 }
 
 const COLS: &str = "org_id, branch_id, enabled, program_name, program_name_ar, mode, \
     earn_piastres_per_point, earn_on_discounted, earn_include_tax, \
-    default_reward_cost, require_otp, pass_background_color, \
-    pass_foreground_color, pass_label_color, pass_logo_url, terms, terms_ar";
+    default_reward_cost, require_otp, terms, terms_ar";
 
 impl From<Row> for LoyaltySettings {
     fn from(r: Row) -> Self {
@@ -175,10 +147,6 @@ impl From<Row> for LoyaltySettings {
             earn_include_tax: r.earn_include_tax,
             default_reward_cost: r.default_reward_cost,
             require_otp: r.require_otp,
-            pass_background_color: r.pass_background_color,
-            pass_foreground_color: r.pass_foreground_color,
-            pass_label_color: r.pass_label_color,
-            pass_logo_url: r.pass_logo_url,
             terms: r.terms,
             terms_ar: r.terms_ar,
         }
@@ -305,9 +273,8 @@ pub async fn put_settings(
     let row: Row = sqlx::query_as(&format!(
         "INSERT INTO loyalty_settings (org_id, branch_id, enabled, program_name, program_name_ar, \
             mode, earn_piastres_per_point, earn_on_discounted, earn_include_tax, default_reward_cost, \
-            require_otp, pass_background_color, pass_foreground_color, pass_label_color, \
-            pass_logo_url, terms, terms_ar) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) \
+            require_otp, terms, terms_ar) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
          ON CONFLICT (org_id, COALESCE(branch_id, '00000000-0000-0000-0000-000000000000'::uuid)) \
          DO UPDATE SET enabled = EXCLUDED.enabled, program_name = EXCLUDED.program_name, \
             program_name_ar = EXCLUDED.program_name_ar, mode = EXCLUDED.mode, \
@@ -315,11 +282,7 @@ pub async fn put_settings(
             earn_on_discounted = EXCLUDED.earn_on_discounted, \
             earn_include_tax = EXCLUDED.earn_include_tax, \
             default_reward_cost = EXCLUDED.default_reward_cost, \
-            require_otp = EXCLUDED.require_otp, \
-            pass_background_color = EXCLUDED.pass_background_color, \
-            pass_foreground_color = EXCLUDED.pass_foreground_color, \
-            pass_label_color = EXCLUDED.pass_label_color, \
-            pass_logo_url = EXCLUDED.pass_logo_url, terms = EXCLUDED.terms, \
+            require_otp = EXCLUDED.require_otp, terms = EXCLUDED.terms, \
             terms_ar = EXCLUDED.terms_ar, updated_at = now() \
          RETURNING {COLS}"
     ))
@@ -334,10 +297,6 @@ pub async fn put_settings(
     .bind(incoming.earn_include_tax)
     .bind(incoming.default_reward_cost)
     .bind(incoming.require_otp)
-    .bind(&incoming.pass_background_color)
-    .bind(&incoming.pass_foreground_color)
-    .bind(&incoming.pass_label_color)
-    .bind(&incoming.pass_logo_url)
     .bind(&incoming.terms)
     .bind(&incoming.terms_ar)
     .fetch_one(pool.get_ref())

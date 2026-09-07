@@ -50555,30 +50555,6 @@
             "type": "string",
             "format": "uuid"
           },
-          "pass_background_color": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pass_foreground_color": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pass_label_color": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pass_logo_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "program_name": {
             "type": "string"
           },

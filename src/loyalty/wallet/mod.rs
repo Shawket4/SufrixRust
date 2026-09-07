@@ -82,6 +82,39 @@ pub struct PassLinks {
     pub any: bool,
 }
 
+/// Read PEM/key material from `KEY_FILE` (a path) or `KEY` (inline).
+///
+/// Shared by both wallets on purpose. Apple had the file form and Google did
+/// not, which meant a documented `LOYALTY_GOOGLE_SA_KEY_FILE` was silently
+/// ignored and the wallet read as unconfigured — no button, no error, nothing
+/// in a log. One helper, so the two cannot drift again.
+///
+/// The file form is what production should use: a private key in an env var has
+/// to have its newlines escaped, shows up in `docker inspect`, and lands in any
+/// process listing that dumps the environment. The inline form stays for local
+/// development and tests.
+pub(crate) fn key_material(key: &str) -> Option<Vec<u8>> {
+    if let Some(path) = std::env::var(format!("{key}_FILE"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                // Configured but unreadable is an operator error worth shouting
+                // about: silently falling back to "not configured" looks
+                // identical to never having set it up.
+                tracing::error!(path = %path, error = %e, "cannot read {}_FILE", key);
+                None
+            }
+        };
+    }
+    std::env::var(key)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.replace("\\n", "\n").into_bytes())
+}
+
 /// The customer-facing base URL (`loyalty.madar-pos.cloud`), trailing slash
 /// trimmed. Unset degrades softly: the Apple link is omitted rather than the
 /// signup failing.
@@ -92,11 +125,47 @@ pub fn loyalty_base() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The scheme and host of a URL, with no path. `None` if it is not absolute.
+///
+/// Pure so the parsing is testable: getting this wrong points every device on
+/// the estate at an address that does not answer.
+pub fn origin_of(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split('/').next().filter(|h| !h.is_empty())?;
+    let scheme = if url.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    Some(format!("{scheme}://{host}"))
+}
+
+/// Where Apple's devices should call to refresh a pass.
+///
+/// Absolute by necessity — it is baked into a file on someone's phone, so it
+/// cannot be relative like the download link is.
+///
+/// Falls back to the API's own origin, because that is where these endpoints
+/// actually live and because tying pass UPDATES to `PUBLIC_LOYALTY_BASE_URL`
+/// made one unset variable mean "no pass ever updates again" — silently, and
+/// unfixably for every pass already issued under it.
+pub fn web_service_url() -> Option<String> {
+    if let Some(base) = loyalty_base() {
+        return Some(format!("{base}/api/wallet"));
+    }
+    // `UPLOADS_BASE_URL` is already set wherever images work, and it points at
+    // the API.
+    let uploads = std::env::var("UPLOADS_BASE_URL").ok()?;
+    Some(format!("{}/wallet", origin_of(&uploads)?))
+}
+
 /// Build both "add to wallet" links for a member.
 pub fn links_for(
     member: &MemberRow,
     settings: &LoyaltySettings,
-    org_name: &str,
+    brand: &crate::orgs::branding::OrgBrand,
     locations: &[PassLocation],
 ) -> PassLinks {
     // Relative to the site root, and under `/api/` — which is what nginx proxies
@@ -114,7 +183,7 @@ pub fn links_for(
             member.member_token
         )
     });
-    let google_url = google::save_url(member, settings, org_name, locations).unwrap_or_else(|e| {
+    let google_url = google::save_url(member, settings, brand, locations).unwrap_or_else(|e| {
         // A misconfigured issuer must not take the signup down with it.
         tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
         None
@@ -200,6 +269,57 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_update_address_survives_an_unset_loyalty_base() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: the lock makes this the only thread touching the environment.
+        unsafe {
+            std::env::remove_var("PUBLIC_LOYALTY_BASE_URL");
+            std::env::set_var(
+                "UPLOADS_BASE_URL",
+                "https://api.madar-pos.cloud/api/uploads",
+            );
+        }
+        // Falls back to the API origin, where the endpoints actually are.
+        assert_eq!(
+            web_service_url().as_deref(),
+            Some("https://api.madar-pos.cloud/wallet")
+        );
+
+        unsafe {
+            std::env::set_var("PUBLIC_LOYALTY_BASE_URL", "https://loyalty.madar-pos.cloud");
+        }
+        assert_eq!(
+            web_service_url().as_deref(),
+            Some("https://loyalty.madar-pos.cloud/api/wallet")
+        );
+        unsafe {
+            std::env::remove_var("PUBLIC_LOYALTY_BASE_URL");
+            std::env::remove_var("UPLOADS_BASE_URL");
+        }
+        // Nothing configured: the pass still issues, it simply never self-updates.
+        assert!(web_service_url().is_none());
+    }
+
+    #[test]
+    fn origin_parsing_keeps_the_scheme_and_drops_the_path() {
+        assert_eq!(
+            origin_of("https://api.madar-pos.cloud/api/uploads").as_deref(),
+            Some("https://api.madar-pos.cloud")
+        );
+        assert_eq!(
+            origin_of("http://localhost:8081/x").as_deref(),
+            Some("http://localhost:8081")
+        );
+        assert_eq!(
+            origin_of("https://api.example.com").as_deref(),
+            Some("https://api.example.com")
+        );
+        // Not absolute, so there is no origin to take.
+        assert_eq!(origin_of("/api/uploads"), None);
+        assert_eq!(origin_of("https://"), None);
+    }
+
     /// The Apple link is the API path, and a CERTIFICATE is all it takes.
     ///
     /// Two things this pins. It must not be a page path — that falls through to
@@ -223,7 +343,12 @@ mod tests {
             std::env::set_var("LOYALTY_APPLE_WWDR_PEM", "x");
         }
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
-        let links = links_for(&member(), &s, "Test Org", &[]);
+        let links = links_for(
+            &member(),
+            &s,
+            &crate::orgs::branding::OrgBrand::default(),
+            &[],
+        );
         assert_eq!(
             links.apple_url.as_deref(),
             Some("/api/public/loyalty/pass/Mabcdefghijklmnopqrstuv/apple.pkpass"),
@@ -240,12 +365,19 @@ mod tests {
             std::env::remove_var("LOYALTY_APPLE_KEY_PEM");
             std::env::remove_var("LOYALTY_APPLE_WWDR_PEM");
         }
-        let bare = links_for(&member(), &s, "Test Org", &[]);
+        let bare = links_for(
+            &member(),
+            &s,
+            &crate::orgs::branding::OrgBrand::default(),
+            &[],
+        );
         assert!(bare.apple_url.is_none());
-        assert!(!bare.any, "no wallet configured means the QR fallback, not a dead button");
+        assert!(
+            !bare.any,
+            "no wallet configured means the QR fallback, not a dead button"
+        );
     }
 
     // Deliberately ONE test, not two: these read process-global environment,
     // and two tests mutating it race in the same process.
-
 }

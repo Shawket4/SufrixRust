@@ -21,7 +21,6 @@ use sqlx::{PgPool, Postgres, Transaction};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::earn::Mode;
 use super::model::{self, MemberRow};
 use super::settings::{load_effective, load_effective_rewards};
 use crate::errors::AppError;
@@ -204,9 +203,4 @@ pub async fn record(
         .await?;
     }
     Ok(())
-}
-
-/// The mode a plan spends in, for callers that need to phrase a message.
-pub fn plan_mode(plan: &RedemptionPlan) -> Option<Mode> {
-    plan.lines.first().map(|l| Mode::parse(&l.currency))
 }

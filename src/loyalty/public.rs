@@ -85,29 +85,19 @@ pub struct CardBrand {
 /// feature is how two surfaces end up disagreeing about who the shop is. The
 /// colours are DERIVED from the logo (`orgs::branding`), so there is nothing to
 /// set and no way to pick two nobody can read.
-async fn load_brand(
-    pool: &PgPool,
-    org_id: Uuid,
+fn card_brand(
+    org: &crate::orgs::branding::OrgBrand,
     s: &super::settings::LoyaltySettings,
-) -> Result<CardBrand, AppError> {
-    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(
-            "SELECT name, logo_url, brand_background, brand_foreground, brand_accent \
-               FROM organizations WHERE id = $1",
-        )
-        .bind(org_id)
-        .fetch_optional(pool)
-        .await?;
-    let (org_name, logo_url, background, foreground, accent) = row.unwrap_or_default();
-    Ok(CardBrand {
-        org_name,
+) -> CardBrand {
+    CardBrand {
+        org_name: org.name.clone(),
         program_name: s.program_name.clone(),
         program_name_ar: s.program_name_ar.clone(),
-        logo_url,
-        background_color: background,
-        foreground_color: foreground,
-        label_color: accent,
-    })
+        logo_url: org.logo_url.clone(),
+        background_color: Some(org.palette.background.clone()),
+        foreground_color: Some(org.palette.foreground.clone()),
+        label_color: Some(org.palette.accent.clone()),
+    }
 }
 
 /// A reward as the signup page lists it: what it is, and what it costs.
@@ -141,7 +131,10 @@ pub async fn join_info(
     Ok(HttpResponse::Ok().json(JoinInfo {
         branch_id: query.branch_id,
         branch_name,
-        brand: load_brand(pool.get_ref(), org_id, &settings).await?,
+        brand: card_brand(
+            &crate::orgs::branding::load(pool.get_ref(), org_id).await?,
+            &settings,
+        ),
         enabled: settings.enabled,
         require_otp: settings.require_otp,
         mode: settings.mode.clone(),
@@ -263,9 +256,10 @@ pub async fn join(
 
     let (rewards, _) = load_effective_rewards(pool.get_ref(), org_id, body.branch_id).await?;
     let mode = settings.mode();
-    let brand = load_brand(pool.get_ref(), org_id, &settings).await?;
+    let org = crate::orgs::branding::load(pool.get_ref(), org_id).await?;
+    let brand = card_brand(&org, &settings);
     let locations = wallet::locations_for_org(pool.get_ref(), org_id).await?;
-    let passes = wallet::links_for(&member, &settings, &brand.org_name, &locations);
+    let passes = wallet::links_for(&member, &settings, &org, &locations);
     Ok(HttpResponse::Ok().json(JoinResult {
         member_token: member.member_token.clone(),
         name: member.name.clone(),
@@ -318,9 +312,10 @@ pub async fn card(
         super::settings::load_effective_rewards_org(pool.get_ref(), member.org_id).await?;
     let mode = settings.mode();
     let target = model::cheapest_cost(&catalogue, mode).unwrap_or(settings.default_reward_cost);
-    let brand = load_brand(pool.get_ref(), member.org_id, &settings).await?;
+    let org = crate::orgs::branding::load(pool.get_ref(), member.org_id).await?;
+    let brand = card_brand(&org, &settings);
     let locations = wallet::locations_for_org(pool.get_ref(), member.org_id).await?;
-    let passes = wallet::links_for(&member, &settings, &brand.org_name, &locations);
+    let passes = wallet::links_for(&member, &settings, &org, &locations);
     let view = member.view(mode, target);
     Ok(HttpResponse::Ok().json(CardView {
         name: view.name,

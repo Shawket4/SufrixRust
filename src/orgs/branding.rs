@@ -165,7 +165,11 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
     // the work regardless of what was uploaded.
     let (w, h) = img.dimensions();
     let small = if w > 96 || h > 96 {
-        img.resize_exact(w.min(96).max(1), h.min(96).max(1), image::imageops::FilterType::Nearest)
+        img.resize_exact(
+            w.min(96).max(1),
+            h.min(96).max(1),
+            image::imageops::FilterType::Nearest,
+        )
     } else {
         img.clone()
     };
@@ -188,11 +192,7 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
         if max - min < 18.0 {
             continue;
         }
-        let key = (
-            r as u32 / BUCKET,
-            g as u32 / BUCKET,
-            b as u32 / BUCKET,
-        );
+        let key = (r as u32 / BUCKET, g as u32 / BUCKET, b as u32 / BUCKET);
         let e = counts.entry(key).or_insert((0, 0, 0, 0));
         e.0 += r as u64;
         e.1 += g as u64;
@@ -218,6 +218,72 @@ pub fn palette_from_image(img: &image::DynamicImage) -> Option<Palette> {
         background: hex(r, g, b),
         foreground,
         accent: hex(ar, ag, ab),
+    })
+}
+
+/// Who a shop is, everywhere a customer sees them.
+///
+/// One row, one loader. The web card, the Apple pass and the Google pass all
+/// paint the same organisation, and each having its own copy of this query is
+/// how they came to disagree — the pass kept reading colours out of
+/// `loyalty_settings` long after the UI for them was removed, so every pass came
+/// back Apple's default grey while the web card was correctly themed.
+#[derive(Debug, Clone)]
+pub struct OrgBrand {
+    /// The organisation's name, as it appears in a customer's wallet list.
+    /// Empty when the org has somehow gone missing, which callers fall back on.
+    pub name: String,
+    /// Absolute URL of the logo, for the surfaces that FETCH an image (the web
+    /// card, Google Wallet). Apple embeds bytes instead — see
+    /// `loyalty::wallet::apple::pass_brand`.
+    pub logo_url: Option<String>,
+    /// Derived from the logo when it was uploaded; Madar's own until then.
+    pub palette: Palette,
+}
+
+impl Default for OrgBrand {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            logo_url: None,
+            palette: Palette::default(),
+        }
+    }
+}
+
+/// Read an organisation's brand.
+///
+/// A missing organisation, or a row whose colours predate the palette work,
+/// yields Madar's own rather than nothing: an unbranded card is a fallback, a
+/// blank one is a bug.
+pub async fn load(pool: &sqlx::PgPool, org_id: uuid::Uuid) -> Result<OrgBrand, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        name: String,
+        logo_url: Option<String>,
+        brand_background: Option<String>,
+        brand_foreground: Option<String>,
+        brand_accent: Option<String>,
+    }
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT name, logo_url, brand_background, brand_foreground, brand_accent \
+           FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else {
+        return Ok(OrgBrand::default());
+    };
+    let d = Palette::default();
+    Ok(OrgBrand {
+        name: row.name,
+        logo_url: row.logo_url,
+        palette: Palette {
+            background: row.brand_background.unwrap_or(d.background),
+            foreground: row.brand_foreground.unwrap_or(d.foreground),
+            accent: row.brand_accent.unwrap_or(d.accent),
+        },
     })
 }
 
