@@ -16,7 +16,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 use madar_rust::openapi::ApiDoc;
 use madar_rust::{
     ai, analytics, auth, bookings, branches, bundles, costing, delivery, demo, discounts,
-    floor_ops, insights, integrations, inventory, kitchen, menu, orders, orgs, payment_methods,
+    insights, integrations, inventory, kitchen, menu, orders, orgs, payment_methods,
     permissions, purchasing, qr_card, realtime, recipes, reports, reservations, shifts, staff,
     stocktakes, sync, tickets, tills, uploads, users,
 };
@@ -264,8 +264,10 @@ async fn run() -> std::io::Result<()> {
             .configure(shifts::routes::configure)
             .configure(staff::routes::configure)
             .configure(tills::routes::configure)
+            // One `/floor` scope: `reservations::routes` owns it and pulls the
+            // cross-table operations of `floor_ops` in. A second scope on the
+            // same prefix would be unreachable — actix never falls through.
             .configure(reservations::routes::configure)
-            .configure(floor_ops::routes::configure)
             .configure(bookings::routes::configure)
             .configure(realtime::routes::configure)
             .configure(kitchen::routes::configure)

@@ -827,3 +827,48 @@ async fn resources_match_the_db_enum(pool: PgPool) {
         "RESOURCES names labels the DB enum does not have: {unknown:?}"
     );
 }
+
+/// A dine-in order rung up at the till must be able to become an OPEN TICKET.
+///
+/// The alternative — the parked draft the POS used to make — is device-local, so
+/// the table it sits at stays `free` in `branch_tables`. That is the row
+/// `bookings::availability::occupied_now` reads and the row the dashboard's
+/// floor renders, so a table with a party at it would be offered to a guest
+/// booking that slot and show empty to the manager. Without this grant the
+/// teller cannot open the ticket that makes the table say it is taken.
+#[sqlx::test]
+async fn teller_can_open_a_ticket_on_a_table(pool: PgPool) {
+    use crate::auth::jwt::Claims;
+    use crate::permissions::checker::check_permission;
+
+    crate::permissions::seeder::seed_role_permissions(&pool)
+        .await
+        .unwrap();
+    let org_id = seed_org(&pool).await;
+    let user_id = seed_user(&pool, org_id, "Till 1", UserRole::Teller, "till@t.com").await;
+
+    let claims = Claims {
+        sub: user_id.to_string(),
+        org_id: Some(org_id.to_string()),
+        role: UserRole::Teller,
+        branch_id: None,
+        exp: 9_999_999_999,
+        iat: 0,
+    };
+
+    for (res, act) in [
+        ("open_tickets", "create"),
+        ("open_tickets", "read"),
+        ("open_tickets", "update"),
+        // …and the floor ops that ticket then needs: move it, queue it for a
+        // better section, bus its table.
+        ("table_transfers", "create"),
+        ("table_transfers", "read"),
+        ("table_transfers", "update"),
+    ] {
+        assert!(
+            check_permission(&pool, &claims, res, act).await.is_ok(),
+            "teller should be allowed {res}:{act}"
+        );
+    }
+}

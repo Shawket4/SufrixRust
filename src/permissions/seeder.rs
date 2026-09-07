@@ -184,8 +184,16 @@ pub async fn seed_role_permissions(pool: &PgPool) -> Result<(), sqlx::Error> {
         ("teller", "delivery_orders", "update", true),
         // KDS + open tickets: a teller on a KDS/till device reads + bumps the
         // kitchen feed and settles waiter tickets into their drawer.
+        //
+        // `create` too, because a dine-in order rung up at the till has to
+        // become an OPEN TICKET like the waiter's. It used to become a parked
+        // draft instead — and a parked draft is device-local, so the table it
+        // sat at stayed `free` server-side: invisible to the dashboard's floor,
+        // and still offered to a guest booking that slot (`occupied_now` reads
+        // `branch_tables.status`). An occupied table has to say so out loud.
         ("teller", "kitchen_orders", "read", true),
         ("teller", "kitchen_orders", "update", true),
+        ("teller", "open_tickets", "create", true),
         ("teller", "open_tickets", "read", true),
         ("teller", "open_tickets", "update", true),
         // ── kitchen station + routing config (managers) ───────────
