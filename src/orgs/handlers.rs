@@ -35,6 +35,13 @@ pub struct Org {
     #[schema(value_type = f64, example = 0.14)]
     pub tax_rate: sqlx::types::BigDecimal,
     pub receipt_footer: Option<String>,
+    /// The card palette derived from `logo_url` when it was uploaded
+    /// (`orgs::branding`). Read-only over the API: there is nothing to set, and
+    /// nothing a client may set — the point of deriving is that a shop cannot
+    /// choose two colours nobody can read.
+    pub brand_background: Option<String>,
+    pub brand_foreground: Option<String>,
+    pub brand_accent: Option<String>,
     pub is_active: bool,
     /// IANA timezone name. The org-level default that branches inherit when
     /// their own timezone is unset. Defaults to `Africa/Cairo`.
@@ -250,7 +257,7 @@ pub async fn create_org(
         r#"
         INSERT INTO organizations (name, slug, logo_url, currency_code, tax_rate, receipt_footer, timezone)
         VALUES ($1, $2, $3, $4, $5, $6, $7::timezone_name)
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
         "#,
     )
     .bind(&name)
@@ -303,7 +310,7 @@ pub async fn list_orgs(req: HttpRequest, pool: crate::db::Db) -> Result<HttpResp
 
     let orgs = sqlx::query_as::<_, Org>(
         r#"
-        SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
+        SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
         FROM organizations
         WHERE deleted_at IS NULL
         ORDER BY name
@@ -506,7 +513,7 @@ pub async fn update_org(
             timezone       = COALESCE(NULLIF($10, '')::timezone_name, timezone),
             updated_at     = NOW()
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
         "#,
     )
     .bind(*org_id)
@@ -656,7 +663,7 @@ pub async fn upload_org_logo(
             brand_background = $3, brand_foreground = $4, brand_accent = $5,
             brand_logo_source = $2
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
+        RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
         "#,
     )
     .bind(*org_id)
@@ -730,7 +737,7 @@ pub(crate) fn extract_claims(req: &HttpRequest) -> Result<Claims, AppError> {
 
 async fn fetch_org(pool: &PgPool, id: Uuid) -> Result<Org, AppError> {
     sqlx::query_as::<_, Org>(
-        "SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
+        "SELECT id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, brand_background, brand_foreground, brand_accent, is_active, timezone::text AS timezone
          FROM organizations
          WHERE id = $1 AND deleted_at IS NULL",
     )

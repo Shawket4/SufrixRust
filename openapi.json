@@ -53100,6 +53100,25 @@
           "timezone"
         ],
         "properties": {
+          "brand_accent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "brand_background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The card palette derived from `logo_url` when it was uploaded\n(`orgs::branding`). Read-only over the API: there is nothing to set, and\nnothing a client may set — the point of deriving is that a shop cannot\nchoose two colours nobody can read."
+          },
+          "brand_foreground": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "currency_code": {
             "type": "string",
             "example": "EGP"
