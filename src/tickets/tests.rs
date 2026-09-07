@@ -732,3 +732,212 @@ async fn replay_fire_publishes_realtime(pool: PgPool) {
         "replayed fire must publish kitchen.fired for the KDS (got {kinds:?})"
     );
 }
+
+/// A reward on a ticket names its LINE, and the server turns that into the
+/// position the line lands at.
+///
+/// The ordering (`round_number, created_at`) is decided in the settle handler,
+/// so only the server can know it. A till that guessed an index would take the
+/// wrong item off the bill — silently, and in the customer's favour or not.
+/// This pins the translation with a ticket whose SECOND round holds the reward,
+/// which is exactly where a naive "index = position in the round" would break.
+#[sqlx::test]
+async fn a_reward_on_a_ticket_covers_the_line_it_names(pool: PgPool) {
+    let app = app!(pool);
+    let org = seed_org(&pool).await;
+    let branch = seed_branch(&pool, org).await;
+    let cheap = seed_menu_item(&pool, org, 1_000).await;
+    let latte = seed_menu_item(&pool, org, 5_000).await;
+    seed_cash_method(&pool, org).await;
+    let waiter = seed_user(&pool, org, "waiter").await;
+    let teller = seed_user(&pool, org, "teller").await;
+    let shift = open_shift_row(&pool, branch, teller).await;
+
+    for (role, res, act) in [
+        ("waiter", "open_tickets", "create"),
+        ("waiter", "open_tickets", "update"),
+        ("teller", "open_tickets", "update"),
+        ("teller", "orders", "create"),
+        ("teller", "payments", "create"),
+        ("teller", "loyalty", "update"),
+    ] {
+        grant(&pool, role, res, act).await;
+    }
+    let waiter_t = token(waiter, org, UserRole::Waiter);
+    let teller_t = token(teller, org, UserRole::Teller);
+
+    // A stamp card, and the latte is what a stamp buys.
+    sqlx::query(
+        "INSERT INTO loyalty_settings (org_id, branch_id, enabled, mode, default_reward_cost) \
+         VALUES ($1, NULL, true, 'visits', 5)",
+    )
+    .bind(org)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO loyalty_reward_items (org_id, menu_item_id, cost_currency, cost_amount) \
+         VALUES ($1,$2,'visits',5)",
+    )
+    .bind(org)
+    .bind(latte)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let member: Uuid = sqlx::query_scalar(
+        "INSERT INTO loyalty_customers (org_id, phone, name, member_token) \
+         VALUES ($1,'201000000001','Ali','Mticketline000000001') RETURNING id",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO loyalty_transactions (org_id, customer_id, branch_id, kind, currency, points) \
+         VALUES ($1,$2,$3,'adjust','visits',5)",
+    )
+    .bind(org)
+    .bind(member)
+    .bind(branch)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Round 1: the cheap item. Round 2: the latte.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/open-tickets")
+            .insert_header(("Authorization", format!("Bearer {waiter_t}")))
+            .set_json(&serde_json::json!({
+                "branch_id": branch,
+                "items": [{ "menu_item_id": cheap, "quantity": 1 }]
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 201);
+    let view: OpenTicketView = test::read_body_json(resp).await;
+    let ticket_id = view.id;
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/open-tickets/{ticket_id}/rounds"))
+            .insert_header(("Authorization", format!("Bearer {waiter_t}")))
+            .set_json(&serde_json::json!({
+                "items": [{ "menu_item_id": latte, "quantity": 1 }]
+            }))
+            .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success(), "second round: {}", resp.status());
+
+    // The latte's LINE id — what the till would send.
+    let latte_line: Uuid = sqlx::query_scalar(
+        "SELECT oti.id FROM open_ticket_items oti \
+           JOIN open_ticket_rounds r ON r.id = oti.round_id \
+          WHERE oti.open_ticket_id = $1 AND oti.menu_item_id = $2",
+    )
+    .bind(ticket_id)
+    .bind(latte)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let settle = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/open-tickets/{ticket_id}/settle"))
+            .insert_header(("Authorization", format!("Bearer {teller_t}")))
+            .set_json(&serde_json::json!({
+                "shift_id": shift,
+                "payment_method": "cash",
+                "loyalty_customer_id": member,
+                "loyalty_redemptions": [{ "ticket_line_id": latte_line }]
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(settle.status(), 200, "cashier settles with a reward");
+    let order: Order = test::read_body_json(settle).await;
+
+    // The LATTE went free, not the cheap item that sits first in the list.
+    assert_eq!(order.subtotal, 1_000, "only the cheap line is charged");
+    let free: Vec<(String, i32, bool)> = sqlx::query_as(
+        "SELECT item_name, line_total, is_reward FROM order_items \
+          WHERE order_id = $1 ORDER BY line_total",
+    )
+    .bind(order.id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        free.iter().any(|(_, total, reward)| *total == 0 && *reward),
+        "the covered line is free and marked: {free:?}"
+    );
+    let balance: i32 =
+        sqlx::query_scalar("SELECT visits_balance FROM loyalty_customers WHERE id = $1")
+            .bind(member)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(balance, 0, "five stamps spent");
+}
+
+/// A positional index on a ticket settle is refused outright.
+///
+/// The till cannot know the server's ordering, so an index it supplied would be
+/// a guess. Rejecting is the only safe answer — the alternative is giving away
+/// whichever item happened to land there.
+#[sqlx::test]
+async fn a_ticket_reward_without_a_line_id_is_refused(pool: PgPool) {
+    let app = app!(pool);
+    let org = seed_org(&pool).await;
+    let branch = seed_branch(&pool, org).await;
+    let item = seed_menu_item(&pool, org, 1_000).await;
+    seed_cash_method(&pool, org).await;
+    let waiter = seed_user(&pool, org, "waiter").await;
+    let teller = seed_user(&pool, org, "teller").await;
+    let shift = open_shift_row(&pool, branch, teller).await;
+    for (role, res, act) in [
+        ("waiter", "open_tickets", "create"),
+        ("teller", "open_tickets", "update"),
+        ("teller", "orders", "create"),
+        ("teller", "payments", "create"),
+        ("teller", "loyalty", "update"),
+    ] {
+        grant(&pool, role, res, act).await;
+    }
+    let waiter_t = token(waiter, org, UserRole::Waiter);
+    let teller_t = token(teller, org, UserRole::Teller);
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/open-tickets")
+            .insert_header(("Authorization", format!("Bearer {waiter_t}")))
+            .set_json(&serde_json::json!({
+                "branch_id": branch,
+                "items": [{ "menu_item_id": item, "quantity": 1 }]
+            }))
+            .to_request(),
+    )
+    .await;
+    let view: OpenTicketView = test::read_body_json(resp).await;
+
+    let settle = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/open-tickets/{}/settle", view.id))
+            .insert_header(("Authorization", format!("Bearer {teller_t}")))
+            .set_json(&serde_json::json!({
+                "shift_id": shift,
+                "payment_method": "cash",
+                "loyalty_redemptions": [{ "item_index": 0 }]
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(settle.status(), 400, "a guessed index is refused");
+}

@@ -98,13 +98,18 @@ pub async fn plan(
     let mut lines: Vec<PlannedRedemption> = Vec::new();
     let mut spent = 0i32;
     for r in redemptions {
+        // By this point the index is resolved: the cart path sends it, and the
+        // ticket-settle path has had `ticket_line_id` translated into it.
+        let index = r
+            .item_index
+            .ok_or_else(|| AppError::BadRequest("Name the line to reward".into()))?;
         let item = items
-            .get(r.item_index)
-            .ok_or_else(|| AppError::BadRequest(format!("No line {} to reward", r.item_index)))?;
+            .get(index)
+            .ok_or_else(|| AppError::BadRequest(format!("No line {index} to reward")))?;
         // One redemption per line: the ledger's uniqueness is (order, line), so
         // two rows for one line could not both be recorded, and a silently
         // dropped one is a free item nobody was charged for.
-        if lines.iter().any(|l| l.item_index == r.item_index) {
+        if lines.iter().any(|l| l.item_index == index) {
             return Err(AppError::BadRequest(
                 "One reward per line — raise the units instead".into(),
             ));
@@ -138,7 +143,7 @@ pub async fn plan(
         let cost = reward.cost_amount.saturating_mul(units);
         spent = spent.saturating_add(cost);
         lines.push(PlannedRedemption {
-            item_index: r.item_index,
+            item_index: index,
             menu_item_id,
             units,
             currency: mode.as_str().into(),

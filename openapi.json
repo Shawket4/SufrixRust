@@ -50435,14 +50435,22 @@
       "LoyaltyRedemptionInput": {
         "type": "object",
         "description": "One reward applied to one line of the cart.",
-        "required": [
-          "item_index"
-        ],
         "properties": {
           "item_index": {
-            "type": "integer",
-            "description": "Index into `items`. An index rather than an id because a cart may hold\nthe same menu item on two lines with different modifiers, and only the\nposition tells them apart.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Index into `items`. An index rather than an id because a cart may hold\nthe same menu item on two lines with different modifiers, and only the\nposition tells them apart.\n\nOptional because a TICKET settle names its lines by id instead (see\n`ticket_line_id`) and the server fills this in — a till settling a ticket\ncannot see the order the server will flatten its rounds into, and a\nguessed index takes the wrong item off the bill.",
             "minimum": 0
+          },
+          "ticket_line_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`open_ticket_items.id` — how a ticket settle names the line to cover.\nResolved to `item_index` by `settle_open_ticket` before pricing."
           },
           "units": {
             "type": [

@@ -739,9 +739,12 @@ pub(crate) async fn settle_open_ticket_inner(
         return Err(AppError::Conflict("Ticket is already settled".into()));
     }
 
-    // Replay the stored client-priced items back through the POS create-order path.
-    let line_rows: Vec<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT oti.line FROM open_ticket_items oti \
+    // Replay the stored client-priced items back through the POS create-order
+    // path. The id comes along so a reward can name a LINE rather than guess a
+    // position: this ORDER BY is what decides the positions, and it lives here,
+    // not on the till.
+    let line_rows: Vec<(Uuid, serde_json::Value)> = sqlx::query_as(
+        "SELECT oti.id, oti.line FROM open_ticket_items oti \
          JOIN open_ticket_rounds r ON r.id = oti.round_id \
          WHERE oti.open_ticket_id = $1 AND oti.voided_at IS NULL \
          ORDER BY r.round_number, oti.created_at",
@@ -755,12 +758,32 @@ pub(crate) async fn settle_open_ticket_inner(
         ));
     }
     let mut items: Vec<OrderItemInput> = Vec::with_capacity(line_rows.len());
-    for (line_json,) in line_rows {
+    let mut line_positions: std::collections::HashMap<Uuid, usize> =
+        std::collections::HashMap::with_capacity(line_rows.len());
+    for (line_id, line_json) in line_rows {
+        line_positions.insert(line_id, items.len());
         let stored: super::StoredTicketLine =
             serde_json::from_value(line_json).map_err(|_| AppError::Internal)?;
         let input: OrderItemInput =
             serde_json::from_value(stored.input).map_err(|_| AppError::Internal)?;
         items.push(input);
+    }
+
+    // Translate each reward's LINE into the position that line ended up at.
+    // A settle must name lines by id: the till cannot see the order the rounds
+    // flatten into, and a guessed index takes the wrong item off the bill.
+    let mut redemptions = body.loyalty_redemptions.clone();
+    for r in &mut redemptions {
+        let Some(line_id) = r.ticket_line_id else {
+            return Err(AppError::BadRequest(
+                "A reward on a ticket must name the line it covers".into(),
+            ));
+        };
+        r.item_index = Some(*line_positions.get(&line_id).ok_or_else(|| {
+            // A voided line, or one from another ticket. Either way the reward
+            // has nothing to cover, and guessing would give something away.
+            AppError::BadRequest("That line is not on this ticket".into())
+        })?);
     }
 
     // Discount: the cashier's settle override wins, else the waiter's ticket discount.
@@ -775,7 +798,7 @@ pub(crate) async fn settle_open_ticket_inner(
     let request = CreateOrderRequest {
         branch_id,
         loyalty_customer_id: body.loyalty_customer_id,
-        loyalty_redemptions: body.loyalty_redemptions.clone(),
+        loyalty_redemptions: redemptions,
         shift_id: body.shift_id,
         payment_method: body.payment_method.clone(),
         customer_name,
