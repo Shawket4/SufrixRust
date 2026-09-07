@@ -485,6 +485,8 @@ paths(
         crate::delivery::gateway::pause,
         // ── qr (dynamic short-URL + branded card) ────────────────────
         crate::qr_card::handlers::org_qr,
+        crate::qr_card::handlers::branch_booking_qr,
+        crate::qr_card::handlers::org_booking_qr,
         crate::qr_card::handlers::branch_qr,
         crate::qr_card::handlers::create_table,
         crate::qr_card::handlers::list_tables,
