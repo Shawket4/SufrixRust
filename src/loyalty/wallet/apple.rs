@@ -25,6 +25,26 @@ use super::google::progress_line;
 /// more wastes bytes on every device that holds it.
 const MAX_LOCATIONS: usize = 10;
 
+/// The images every pass carries, compiled into the binary.
+///
+/// **`icon.png` is not optional.** A pass without one is rejected by iOS
+/// outright, and the only thing the customer sees is Safari saying it "cannot
+/// download this file" — no mention of an icon, nothing in any log. The rest
+/// are what make the pass look like Madar rather than a grey rectangle.
+///
+/// Embedded rather than read from disk so a pass can never be half-built by a
+/// missing file on one deploy, and so the manifest always covers exactly what
+/// ships. Every entry here MUST be hashed into `manifest.json` — an
+/// unhashed file in the archive invalidates the signature.
+const PASS_IMAGES: &[(&str, &[u8])] = &[
+    ("icon.png", include_bytes!("../../../static/wallet/icon.png")),
+    ("icon@2x.png", include_bytes!("../../../static/wallet/icon@2x.png")),
+    ("icon@3x.png", include_bytes!("../../../static/wallet/icon@3x.png")),
+    ("logo.png", include_bytes!("../../../static/wallet/logo.png")),
+    ("logo@2x.png", include_bytes!("../../../static/wallet/logo@2x.png")),
+    ("logo@3x.png", include_bytes!("../../../static/wallet/logo@3x.png")),
+];
+
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.trim().is_empty())
 }
@@ -315,8 +335,21 @@ pub fn build_pkpass(pass: &serde_json::Value) -> Result<Vec<u8>, AppError> {
         h.update(b);
         hex(&h.finalize())
     };
-    let manifest = serde_json::to_vec(&json!({ "pass.json": digest(&pass_bytes) }))
-        .map_err(|_| AppError::Internal)?;
+
+    // Every file in the archive except the manifest and the signature itself.
+    // Built once and used for BOTH the manifest and the zip, so the two can
+    // never disagree — a hash for a file that is not there, or a file with no
+    // hash, invalidates the signature and iOS refuses the pass without saying
+    // why.
+    let mut payload: Vec<(&str, &[u8])> = vec![("pass.json", pass_bytes.as_slice())];
+    payload.extend_from_slice(PASS_IMAGES);
+
+    let mut manifest_map = serde_json::Map::new();
+    for (name, bytes) in &payload {
+        manifest_map.insert((*name).to_string(), json!(digest(bytes)));
+    }
+    let manifest =
+        serde_json::to_vec(&serde_json::Value::Object(manifest_map)).map_err(|_| AppError::Internal)?;
     let signature = sign_manifest(&manifest)?;
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -326,11 +359,11 @@ pub fn build_pkpass(pass: &serde_json::Value) -> Result<Vec<u8>, AppError> {
         // care, so the simpler archive is the better one to debug.
         let opts: zip::write::FileOptions<'_, ()> =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        for (name, bytes) in [
-            ("pass.json", pass_bytes.as_slice()),
-            ("manifest.json", manifest.as_slice()),
-            ("signature", signature.as_slice()),
-        ] {
+        for (name, bytes) in payload
+            .iter()
+            .copied()
+            .chain([("manifest.json", manifest.as_slice()), ("signature", signature.as_slice())])
+        {
             zip.start_file(name, opts).map_err(|_| AppError::Internal)?;
             zip.write_all(bytes).map_err(|_| AppError::Internal)?;
         }
@@ -600,7 +633,28 @@ mod tests {
             .map(|i| zip.by_index(i).unwrap().name().to_string())
             .collect();
         names.sort();
-        assert_eq!(names, ["manifest.json", "pass.json", "signature"]);
+        // `icon.png` is MANDATORY. A pass without one is rejected by iOS with
+        // nothing but "cannot download this file" — no mention of an icon, and
+        // nothing in any log. This assertion previously listed only the three
+        // metadata files and so pinned that exact bug as correct.
+        assert!(
+            names.contains(&"icon.png".to_string()),
+            "a pass without icon.png is refused by iOS: {names:?}"
+        );
+        assert_eq!(
+            names,
+            [
+                "icon.png",
+                "icon@2x.png",
+                "icon@3x.png",
+                "logo.png",
+                "logo@2x.png",
+                "logo@3x.png",
+                "manifest.json",
+                "pass.json",
+                "signature",
+            ]
+        );
 
         // The manifest must carry the SHA-1 of the pass bytes actually shipped;
         // a digest of anything else is a pass iOS silently discards.
@@ -623,6 +677,33 @@ mod tests {
         };
         let parsed: serde_json::Value = serde_json::from_str(&manifest).unwrap();
         assert_eq!(parsed["pass.json"], digest);
+
+        // The manifest must cover EVERY file in the archive bar itself and the
+        // signature, and hash nothing that is absent. Either mismatch
+        // invalidates the signature, and iOS reports neither.
+        let hashed: std::collections::BTreeSet<String> =
+            parsed.as_object().unwrap().keys().cloned().collect();
+        let shipped: std::collections::BTreeSet<String> = names
+            .iter()
+            .filter(|n| *n != "manifest.json" && *n != "signature")
+            .cloned()
+            .collect();
+        assert_eq!(hashed, shipped, "manifest and archive must agree exactly");
+
+        // And each hash must be of the bytes actually shipped, not of an
+        // earlier version of the file.
+        for name in &shipped {
+            use sha1::{Digest, Sha1};
+            let mut bytes = Vec::new();
+            zip.by_name(name).unwrap().read_to_end(&mut bytes).unwrap();
+            let mut h = Sha1::new();
+            h.update(&bytes);
+            assert_eq!(
+                parsed[name].as_str().unwrap(),
+                hex(&h.finalize()),
+                "{name}: manifest hash does not match the shipped bytes"
+            );
+        }
 
         unsafe {
             std::env::remove_var("LOYALTY_APPLE_CERT_PEM");
