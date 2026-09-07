@@ -52,7 +52,7 @@ pub fn loyalty_base() -> Option<String> {
 }
 
 /// Build both "add to wallet" links for a member.
-pub fn links_for(member: &MemberRow, settings: &LoyaltySettings) -> PassLinks {
+pub fn links_for(member: &MemberRow, settings: &LoyaltySettings, org_name: &str) -> PassLinks {
     // Relative to the site root, and under `/api/` — which is what nginx proxies
     // to the backend. Two things this deliberately is NOT:
     //
@@ -68,7 +68,7 @@ pub fn links_for(member: &MemberRow, settings: &LoyaltySettings) -> PassLinks {
             member.member_token
         )
     });
-    let google_url = google::save_url(member, settings).unwrap_or_else(|e| {
+    let google_url = google::save_url(member, settings, org_name).unwrap_or_else(|e| {
         // A misconfigured issuer must not take the signup down with it.
         tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
         None
@@ -177,7 +177,7 @@ mod tests {
             std::env::set_var("LOYALTY_APPLE_WWDR_PEM", "x");
         }
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
-        let links = links_for(&member(), &s);
+        let links = links_for(&member(), &s, "Test Org");
         assert_eq!(
             links.apple_url.as_deref(),
             Some("/api/public/loyalty/pass/Mabcdefghijklmnopqrstuv/apple.pkpass"),
@@ -194,7 +194,7 @@ mod tests {
             std::env::remove_var("LOYALTY_APPLE_KEY_PEM");
             std::env::remove_var("LOYALTY_APPLE_WWDR_PEM");
         }
-        let bare = links_for(&member(), &s);
+        let bare = links_for(&member(), &s, "Test Org");
         assert!(bare.apple_url.is_none());
         assert!(!bare.any, "no wallet configured means the QR fallback, not a dead button");
     }

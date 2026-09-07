@@ -70,6 +70,42 @@ struct SaveClaims {
     payload: serde_json::Value,
 }
 
+/// The loyalty CLASS: the programme itself, as opposed to one member's card.
+///
+/// Google will not accept an object whose class does not exist, so the class
+/// rides in the same "save" JWT and is created on first use. That is the whole
+/// reason this exists — without it every save fails with a class-not-found that
+/// the customer sees only as a dead link.
+///
+/// One class per ORG, not per programme: it carries the tenant's identity, and
+/// a customer looking at their wallet should see the shop's name on the card.
+pub fn loyalty_class(
+    issuer: &str,
+    org_id: uuid::Uuid,
+    org_name: &str,
+    settings: &LoyaltySettings,
+) -> serde_json::Value {
+    let mut class = json!({
+        "id": class_id(issuer, org_id),
+        // Whose card this is. Always set, even when nothing else has been
+        // configured — falling back to the programme name rather than leaving a
+        // wallet entry with no owner on it.
+        "issuerName": if org_name.trim().is_empty() { settings.program_name.as_str() } else { org_name },
+        "programName": settings.program_name,
+        // `UNDER_REVIEW` is what a class inserted through a save JWT must carry;
+        // Google promotes it when the issuer account is approved. `APPROVED`
+        // here is rejected outright.
+        "reviewStatus": "UNDER_REVIEW",
+    });
+    if let Some(logo) = settings.pass_logo_url.as_deref().filter(|s| !s.trim().is_empty()) {
+        class["programLogo"] = json!({ "sourceUri": { "uri": logo } });
+    }
+    if let Some(bg) = settings.pass_background_color.as_deref() {
+        class["hexBackgroundColor"] = json!(bg);
+    }
+    class
+}
+
 /// The loyalty object as Google models it.
 ///
 /// `loyaltyPoints.balance.int` is the number the customer sees on the pass, and
@@ -152,6 +188,7 @@ pub fn balance_label(mode: crate::loyalty::earn::Mode) -> &'static str {
 pub fn save_url(
     member: &MemberRow,
     settings: &LoyaltySettings,
+    org_name: &str,
 ) -> Result<Option<String>, AppError> {
     let (Some(issuer), Some(email), Some(key)) = (issuer_id(), sa_email(), sa_key()) else {
         return Ok(None);
@@ -161,7 +198,13 @@ pub fn save_url(
         aud: "google",
         typ: "savetowallet",
         iat: chrono::Utc::now().timestamp().max(0) as usize,
-        payload: json!({ "loyaltyObjects": [loyalty_object(&issuer, member, settings)] }),
+        // BOTH, deliberately: the class must exist before the object that
+        // points at it, and sending them together lets Google create it on the
+        // first save rather than needing a separate provisioning step.
+        payload: json!({
+            "loyaltyClasses": [loyalty_class(&issuer, member.org_id, org_name, settings)],
+            "loyaltyObjects": [loyalty_object(&issuer, member, settings)],
+        }),
     };
     let encoding = EncodingKey::from_rsa_pem(key.as_bytes()).map_err(|e| {
         tracing::error!(error = %e, "LOYALTY_GOOGLE_SA_KEY is not a usable RSA PEM");
@@ -263,6 +306,27 @@ pub async fn push_balance(pool: &PgPool, member: &MemberRow) -> Result<(), AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_save_payload_carries_the_class_as_well_as_the_object() {
+        // Google refuses an object whose class does not exist, and the customer
+        // sees only a dead link. The class must ride along.
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let class = loyalty_class("3388000000000000000", uuid::Uuid::nil(), "RUE Coffee", &s);
+        assert_eq!(class["issuerName"], "RUE Coffee");
+        assert_eq!(class["reviewStatus"], "UNDER_REVIEW");
+        assert_eq!(
+            class["id"],
+            format!("3388000000000000000.madar-{}", uuid::Uuid::nil())
+        );
+    }
+
+    #[test]
+    fn a_nameless_org_still_gets_an_issuer_on_the_card() {
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let class = loyalty_class("338", uuid::Uuid::nil(), "  ", &s);
+        assert_eq!(class["issuerName"], s.program_name);
+    }
 
     #[test]
     fn progress_counts_down_then_announces() {

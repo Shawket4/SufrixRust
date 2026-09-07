@@ -255,7 +255,8 @@ pub async fn join(
 
     let (rewards, _) = load_effective_rewards(pool.get_ref(), org_id, body.branch_id).await?;
     let mode = settings.mode();
-    let passes = wallet::links_for(&member, &settings);
+    let brand = CardBrand::of(org_name(pool.get_ref(), org_id).await?, &settings);
+    let passes = wallet::links_for(&member, &settings, &brand.org_name);
     Ok(HttpResponse::Ok().json(JoinResult {
         member_token: member.member_token.clone(),
         name: member.name.clone(),
@@ -263,7 +264,7 @@ pub async fn join(
         mode: settings.mode.clone(),
         next_reward_cost: model::cheapest_cost(&rewards, mode)
             .unwrap_or(settings.default_reward_cost),
-        brand: CardBrand::of(org_name(pool.get_ref(), org_id).await?, &settings),
+        brand,
         passes,
         already_member,
     }))
@@ -308,8 +309,8 @@ pub async fn card(
         super::settings::load_effective_rewards_org(pool.get_ref(), member.org_id).await?;
     let mode = settings.mode();
     let target = model::cheapest_cost(&catalogue, mode).unwrap_or(settings.default_reward_cost);
-    let passes = wallet::links_for(&member, &settings);
     let brand = CardBrand::of(org_name(pool.get_ref(), member.org_id).await?, &settings);
+    let passes = wallet::links_for(&member, &settings, &brand.org_name);
     let view = member.view(mode, target);
     Ok(HttpResponse::Ok().json(CardView {
         name: view.name,
