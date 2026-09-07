@@ -24,6 +24,11 @@ services:
       - "127.0.0.1:8081:8081"
     volumes:
       - /opt/madar-rust/uploads:/app/uploads
+      # Apple Wallet signing material, read-only. The backend reads these by
+      # PATH (LOYALTY_APPLE_*_FILE) rather than as inline PEM, so a private key
+      # never has to have its newlines escaped into an env var — where it would
+      # also show up in `docker inspect` and any process listing.
+      - /opt/madar-rust/WalletCerts:/run/secrets:ro
     env_file: .env
     environment:
       # Override localhost URLs from .env with container-network addresses
