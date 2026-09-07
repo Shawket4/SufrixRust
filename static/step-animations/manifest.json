@@ -1,115 +1,423 @@
 {
-  "_comment": "Each entry is a PRESET STEP: the animation beside it, plus the name and note shown wherever it is used. To add one: drop <slug>.json here (lowercase letters, digits and underscores), add its entry below, commit. The backend picks it up on its next start; no migration and no client release. `order` is the order the library is offered in.",
-  "blend": {
-    "name": "Blend",
-    "name_ar": "خلط في الخلاط",
-    "note": "Blend until smooth",
-    "note_ar": "اخلط حتى يصبح ناعمًا",
-    "order": 10
+  "_comment": "Each entry is a PRESET STEP: the animation beside it, plus the name and note shown wherever it is used. To add one: drop <slug>.json here (lowercase letters, digits and underscores), add its entry below, commit. The backend picks it up on its next start; no migration and no client release. `order` is the order the library is offered in, grouped by station: 100s espresso, 200s milk, 300s brew and tea, 400s pours and mixing, 500s cold bar, 600s finishing, 700s kitchen, 800s ice cream, 900s serving.",
+  "grind": {
+    "name": "Grind coffee",
+    "name_ar": "طحن القهوة",
+    "note": "Grind fresh for every shot",
+    "note_ar": "اطحن طازجًا لكل شوت",
+    "order": 100
   },
-  "dose_powder": {
-    "name": "Add powder",
-    "name_ar": "إضافة بودرة",
-    "note": "Weigh it, don't eyeball it",
-    "note_ar": "زِن الكمية ولا تقدّرها بالنظر",
-    "order": 20
+  "weigh": {
+    "name": "Weigh the dose",
+    "name_ar": "وزن الجرعة",
+    "note": "Check the grams before you tamp",
+    "note_ar": "تحقق من الجرامات قبل الكبس",
+    "order": 105
   },
-  "foam_spoon": {
-    "name": "Spoon foam",
-    "name_ar": "رغوة بالملعقة",
-    "note": "Spoon the foam on top",
-    "note_ar": "ضع الرغوة بالملعقة فوق المشروب",
-    "order": 30
+  "tamp": {
+    "name": "Tamp",
+    "name_ar": "كبس البن",
+    "note": "Level it, then one firm press",
+    "note_ar": "سوِّ السطح ثم اكبس بثبات",
+    "order": 110
   },
-  "latte_art": {
-    "name": "Latte art",
-    "name_ar": "رسم اللاتيه",
-    "note": "Pour steadily and finish with the pattern",
-    "note_ar": "صب بثبات وأنهِ بالرسمة",
-    "order": 40
+  "lock_in": {
+    "name": "Lock in the portafilter",
+    "name_ar": "تركيب حامل الفلتر",
+    "note": "Seat it and twist until it stops",
+    "note_ar": "ركّبه ولُفّه حتى يثبت",
+    "order": 120
   },
-  "pour_liquid": {
-    "name": "Pour",
-    "name_ar": "صب",
-    "note": "Pour to the line for this size",
-    "note_ar": "صب حتى علامة هذا الحجم",
-    "order": 50
-  },
-  "pour_sparkling": {
-    "name": "Top with sparkling",
-    "name_ar": "إضافة مياه غازية",
-    "note": "Top up last so it keeps its fizz",
-    "note_ar": "أضفها في النهاية للحفاظ على الفوران",
-    "order": 60
-  },
-  "pour_thick": {
-    "name": "Pour sauce or syrup",
-    "name_ar": "صب صوص أو سيرب",
-    "note": "Sauce or syrup, straight in",
-    "note_ar": "صوص أو سيرب مباشرة",
-    "order": 70
+  "purge": {
+    "name": "Purge the group head",
+    "name_ar": "تنظيف رأس المجموعة",
+    "note": "A short flush before the shot",
+    "note_ar": "دفعة ماء قصيرة قبل الشوت",
+    "order": 130
   },
   "pull_shot": {
     "name": "Pull espresso shot",
     "name_ar": "سحب شوت إسبريسو",
     "note": "Check the time and the grams",
     "note_ar": "راجع الوقت والجرامات",
-    "order": 80
+    "order": 140
   },
-  "scoop_ice": {
-    "name": "Add ice",
-    "name_ar": "إضافة ثلج",
-    "note": "Fill before the liquids",
-    "note_ar": "املأ قبل السوائل",
-    "order": 90
+  "knock_out": {
+    "name": "Knock out the puck",
+    "name_ar": "تفريغ البن المستعمل",
+    "note": "One firm strike into the knock box",
+    "note_ar": "طرقة واحدة قوية في صندوق التفريغ",
+    "order": 150
   },
-  "shake": {
-    "name": "Shake",
-    "name_ar": "رج في الشيكر",
-    "note": "Shake hard, about ten seconds",
-    "note_ar": "رج بقوة لحوالي عشر ثوانٍ",
-    "order": 100
-  },
-  "spread_sauce": {
-    "name": "Spread sauce",
-    "name_ar": "فرد الصوص",
-    "note": "Spread to the edges",
-    "note_ar": "افرد حتى الأطراف",
-    "order": 110
-  },
-  "stack_bread": {
-    "name": "Bread",
-    "name_ar": "خبز",
-    "note": "Both slices, ready to build",
-    "note_ar": "الشريحتان جاهزتان للتجميع",
-    "order": 120
-  },
-  "stack_slice": {
-    "name": "Add a slice",
-    "name_ar": "إضافة شريحة",
-    "note": "Lay it flat and even",
-    "note_ar": "ضعها مستوية ومنتظمة",
-    "order": 130
+  "decant_milk": {
+    "name": "Pour milk into the pitcher",
+    "name_ar": "سكب الحليب في الإبريق",
+    "note": "Only as much as the drink needs",
+    "note_ar": "بالكمية التي يحتاجها المشروب فقط",
+    "order": 200
   },
   "steam_milk": {
     "name": "Steam milk",
     "name_ar": "تبخير الحليب",
     "note": "Heat and texture to the drink's spec",
     "note_ar": "سخّن واضبط قوام الرغوة حسب المشروب",
-    "order": 140
+    "order": 210
+  },
+  "thermometer": {
+    "name": "Check the temperature",
+    "name_ar": "قياس حرارة الحليب",
+    "note": "Stop at the drink's temperature",
+    "note_ar": "توقف عند حرارة المشروب",
+    "order": 220
+  },
+  "tap_pitcher": {
+    "name": "Swirl and tap the pitcher",
+    "name_ar": "تدوير وطرق الإبريق",
+    "note": "Knock the bubbles out until it shines",
+    "note_ar": "أخرج الفقاعات حتى يلمع",
+    "order": 230
+  },
+  "latte_art": {
+    "name": "Latte art",
+    "name_ar": "رسم اللاتيه",
+    "note": "Pour steadily and finish with the pattern",
+    "note_ar": "صب بثبات وأنهِ بالرسمة",
+    "order": 240
+  },
+  "foam_spoon": {
+    "name": "Spoon foam",
+    "name_ar": "رغوة بالملعقة",
+    "note": "Spoon the foam on top",
+    "note_ar": "ضع الرغوة بالملعقة فوق المشروب",
+    "order": 250
+  },
+  "stencil_dust": {
+    "name": "Dust through a stencil",
+    "name_ar": "نثر البودرة عبر الاستنسل",
+    "note": "Hold it steady, lift it straight up",
+    "note_ar": "ثبّته وارفعه للأعلى مباشرة",
+    "order": 260
+  },
+  "rinse_pitcher": {
+    "name": "Rinse the pitcher",
+    "name_ar": "شطف الإبريق",
+    "note": "Rinse right after every use",
+    "note_ar": "اشطفه مباشرة بعد كل استخدام",
+    "order": 270
+  },
+  "wipe_wand": {
+    "name": "Wipe the steam wand",
+    "name_ar": "مسح أنبوب البخار",
+    "note": "Wipe and purge after every jug",
+    "note_ar": "امسح وأفرغ البخار بعد كل إبريق",
+    "order": 280
+  },
+  "pour_over": {
+    "name": "Pour over",
+    "name_ar": "قهوة مقطرة",
+    "note": "Pour in slow circles from the centre",
+    "note_ar": "صب بدوائر بطيئة من المنتصف",
+    "order": 300
+  },
+  "plunge": {
+    "name": "Press the French press",
+    "name_ar": "ضغط الفرنش برس",
+    "note": "Press down slowly and evenly",
+    "note_ar": "اضغط ببطء وبثبات",
+    "order": 310
+  },
+  "brew_pot": {
+    "name": "Fill the teapot",
+    "name_ar": "تعبئة إبريق الشاي",
+    "note": "Fill from the kettle and let it brew",
+    "note_ar": "املأه من الغلاية واتركه ينقع",
+    "order": 320
+  },
+  "steep": {
+    "name": "Steep",
+    "name_ar": "نقع الشاي",
+    "note": "Steep for the time on the recipe",
+    "note_ar": "انقعه للمدة المذكورة في الوصفة",
+    "order": 330
+  },
+  "lift_infuser": {
+    "name": "Lift the infuser",
+    "name_ar": "رفع مصفاة الشاي",
+    "note": "Lift it out and let it drain",
+    "note_ar": "ارفعها واتركها تصفّى",
+    "order": 340
+  },
+  "pour_tea": {
+    "name": "Pour the tea",
+    "name_ar": "صب الشاي",
+    "note": "Pour steadily into the cup",
+    "note_ar": "صب بثبات في الكوب",
+    "order": 350
+  },
+  "pour_liquid": {
+    "name": "Pour",
+    "name_ar": "صب",
+    "note": "Pour to the line for this size",
+    "note_ar": "صب حتى علامة هذا الحجم",
+    "order": 400
+  },
+  "pour_thick": {
+    "name": "Pour sauce or syrup",
+    "name_ar": "صب صوص أو سيرب",
+    "note": "Sauce or syrup, straight in",
+    "note_ar": "صوص أو سيرب مباشرة",
+    "order": 410
+  },
+  "pour_sparkling": {
+    "name": "Top with sparkling",
+    "name_ar": "إضافة مياه غازية",
+    "note": "Top up last so it keeps its fizz",
+    "note_ar": "أضفها في النهاية للحفاظ على الفوران",
+    "order": 420
+  },
+  "dose_powder": {
+    "name": "Add powder",
+    "name_ar": "إضافة بودرة",
+    "note": "Weigh it, don't eyeball it",
+    "note_ar": "زِن الكمية ولا تقدّرها بالنظر",
+    "order": 430
   },
   "stir": {
     "name": "Stir",
     "name_ar": "تقليب",
     "note": "Stir through to the bottom",
     "note_ar": "قلّب حتى القاع",
-    "order": 150
+    "order": 440
+  },
+  "blend": {
+    "name": "Blend",
+    "name_ar": "خلط في الخلاط",
+    "note": "Blend until smooth",
+    "note_ar": "اخلط حتى يصبح ناعمًا",
+    "order": 450
   },
   "whisk_matcha": {
     "name": "Whisk matcha",
     "name_ar": "خفق الماتشا",
     "note": "Whisk until no lumps remain",
     "note_ar": "اخفق حتى تختفي التكتلات",
-    "order": 160
+    "order": 460
+  },
+  "scoop_ice": {
+    "name": "Add ice",
+    "name_ar": "إضافة ثلج",
+    "note": "Fill before the liquids",
+    "note_ar": "املأ قبل السوائل",
+    "order": 500
+  },
+  "muddle": {
+    "name": "Muddle",
+    "name_ar": "هرس المكونات",
+    "note": "Press and twist, don't shred",
+    "note_ar": "اضغط ولُف دون تمزيق",
+    "order": 510
+  },
+  "squeeze_citrus": {
+    "name": "Squeeze citrus",
+    "name_ar": "عصر الحمضيات",
+    "note": "Squeeze it fresh, straight in",
+    "note_ar": "اعصره طازجًا مباشرة",
+    "order": 520
+  },
+  "shake": {
+    "name": "Shake",
+    "name_ar": "رج في الشيكر",
+    "note": "Shake hard, about ten seconds",
+    "note_ar": "رج بقوة لحوالي عشر ثوانٍ",
+    "order": 530
+  },
+  "strain": {
+    "name": "Strain",
+    "name_ar": "تصفية",
+    "note": "Strain so the ice stays behind",
+    "note_ar": "صفِّ المشروب مع حجز الثلج",
+    "order": 540
+  },
+  "layer_pour": {
+    "name": "Layer the pour",
+    "name_ar": "صب على طبقات",
+    "note": "Pour over a spoon so the layer holds",
+    "note_ar": "صب فوق ملعقة ليبقى الفصل بين الطبقات",
+    "order": 550
+  },
+  "rim_glass": {
+    "name": "Rim the cup",
+    "name_ar": "تغليف حافة الكوب",
+    "note": "Press the rim in evenly all the way round",
+    "note_ar": "اضغط الحافة بالتساوي من كل الجهات",
+    "order": 560
+  },
+  "ladle_boba": {
+    "name": "Add boba pearls",
+    "name_ar": "إضافة لؤلؤ البوبا",
+    "note": "One ladle into the bottom of the cup",
+    "note_ar": "مغرفة واحدة في قاع الكوب",
+    "order": 570
+  },
+  "drop_in": {
+    "name": "Drop in fruit or pearls",
+    "name_ar": "إضافة قطع الفاكهة أو اللؤلؤ",
+    "note": "Drop them in whole and let them sink",
+    "note_ar": "أضفها كاملة واتركها تغوص",
+    "order": 580
+  },
+  "whipped_cream": {
+    "name": "Whipped cream",
+    "name_ar": "كريمة مخفوقة",
+    "note": "Swirl it up to a peak",
+    "note_ar": "لُفها حتى تتكوّن قمة",
+    "order": 600
+  },
+  "drizzle": {
+    "name": "Drizzle sauce",
+    "name_ar": "رش الصوص",
+    "note": "A zigzag across the top",
+    "note_ar": "خطوط متعرجة على الوجه",
+    "order": 610
+  },
+  "garnish": {
+    "name": "Garnish",
+    "name_ar": "تزيين",
+    "note": "Last thing on, before the lid",
+    "note_ar": "آخر خطوة قبل الغطاء",
+    "order": 620
+  },
+  "stack_bread": {
+    "name": "Bread",
+    "name_ar": "خبز",
+    "note": "Both slices, ready to build",
+    "note_ar": "الشريحتان جاهزتان للتجميع",
+    "order": 700
+  },
+  "stack_slice": {
+    "name": "Add a slice",
+    "name_ar": "إضافة شريحة",
+    "note": "Lay it flat and even",
+    "note_ar": "ضعها مستوية ومنتظمة",
+    "order": 710
+  },
+  "spread_sauce": {
+    "name": "Spread sauce",
+    "name_ar": "فرد الصوص",
+    "note": "Spread to the edges",
+    "note_ar": "افرد حتى الأطراف",
+    "order": 720
+  },
+  "slice_ingredient": {
+    "name": "Slice an ingredient",
+    "name_ar": "تقطيع شرائح",
+    "note": "Even slices, all the same thickness",
+    "note_ar": "شرائح متساوية بنفس السماكة",
+    "order": 730
+  },
+  "grate": {
+    "name": "Grate",
+    "name_ar": "بشر الجبن",
+    "note": "Grate straight over the bread",
+    "note_ar": "ابشره مباشرة فوق الخبز",
+    "order": 740
+  },
+  "season": {
+    "name": "Season",
+    "name_ar": "تتبيل",
+    "note": "A light, even shake",
+    "note_ar": "رشة خفيفة ومتساوية",
+    "order": 750
+  },
+  "press": {
+    "name": "Press the sandwich",
+    "name_ar": "كبس الساندويتش",
+    "note": "Press until the marks show",
+    "note_ar": "اكبسه حتى تظهر العلامات",
+    "order": 760
+  },
+  "bake": {
+    "name": "Bake",
+    "name_ar": "خبز في الفرن",
+    "note": "Into the oven for the time on the recipe",
+    "note_ar": "أدخله الفرن للمدة المذكورة في الوصفة",
+    "order": 770
+  },
+  "flip": {
+    "name": "Flip",
+    "name_ar": "قلب على الشواية",
+    "note": "One flip, halfway through",
+    "note_ar": "قلبة واحدة في منتصف الوقت",
+    "order": 780
+  },
+  "cut": {
+    "name": "Cut",
+    "name_ar": "تقطيع الساندويتش",
+    "note": "Cut across the diagonal",
+    "note_ar": "قطّعه قطريًا",
+    "order": 790
+  },
+  "wrap": {
+    "name": "Wrap",
+    "name_ar": "تغليف",
+    "note": "Fold the sides in first",
+    "note_ar": "اطوِ الجوانب أولًا",
+    "order": 800
+  },
+  "plate": {
+    "name": "Plate it",
+    "name_ar": "التقديم في الطبق",
+    "note": "Slide it onto the plate",
+    "note_ar": "أزلقه إلى الطبق",
+    "order": 810
+  },
+  "scoop_ice_cream": {
+    "name": "Scoop ice cream",
+    "name_ar": "تقديم الآيس كريم",
+    "note": "One round scoop",
+    "note_ar": "كرة واحدة مستديرة",
+    "order": 820
+  },
+  "soft_serve": {
+    "name": "Soft serve",
+    "name_ar": "آيس كريم سوفت",
+    "note": "Pull the lever and build the swirl",
+    "note_ar": "اسحب الذراع وكوّن اللفة",
+    "order": 830
+  },
+  "lid": {
+    "name": "Put the lid on",
+    "name_ar": "تركيب الغطاء",
+    "note": "Press until it seats all the way round",
+    "note_ar": "اضغط حتى يثبت من كل الجهات",
+    "order": 900
+  },
+  "sleeve": {
+    "name": "Add a sleeve",
+    "name_ar": "تركيب الحافظة",
+    "note": "Slide it up on every hot cup",
+    "note_ar": "ركّبها على كل كوب ساخن",
+    "order": 910
+  },
+  "label": {
+    "name": "Label the cup",
+    "name_ar": "لصق الملصق",
+    "note": "Face the label to the customer",
+    "note_ar": "وجّه الملصق نحو العميل",
+    "order": 920
+  },
+  "carrier": {
+    "name": "Into the carrier",
+    "name_ar": "وضع الأكواب في الحامل",
+    "note": "Two or more cups go in a carrier",
+    "note_ar": "كوبان أو أكثر توضع في حامل",
+    "order": 930
+  },
+  "hand_over": {
+    "name": "Hand it over",
+    "name_ar": "تسليم الطلب",
+    "note": "Call the name and hand it over",
+    "note_ar": "نادِ الاسم وسلّم الطلب",
+    "order": 940
   }
 }

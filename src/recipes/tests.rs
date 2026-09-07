@@ -519,7 +519,7 @@ async fn reconcile_derives_the_library_and_retires_what_stops_shipping(pool: PgP
     load_library(&pool).await;
     let presets = steps::list_presets(&pool, false).await.unwrap();
     assert!(
-        presets.len() >= 16,
+        presets.len() >= 60,
         "every shipped animation became a preset"
     );
     let milk = presets

@@ -3,6 +3,11 @@ db-backups/
 .DS_Store
 node_modules/
 *.env
+# ...and the variants that slip past it. `madar.env.redacted` was NOT redacted:
+# it carried a live JWT_SECRET, a DATABASE_URL with credentials and an API key.
+# A name is not a guarantee.
+*.env.*
+madar.env*
 package-lock.json
 INVENTORY_OVERHAUL_FRONTEND_SYNC.md
 

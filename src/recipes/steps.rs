@@ -598,7 +598,7 @@ mod scan_tests {
     fn the_shipped_library_is_complete_and_addressable() {
         let found = scan(Path::new("static/step-animations"));
         assert!(
-            found.len() >= 16,
+            found.len() >= 60,
             "every shipped animation is named in the manifest"
         );
         for p in &found {
