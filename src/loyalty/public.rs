@@ -280,7 +280,7 @@ pub async fn join(
     let org = crate::orgs::branding::load(pool.get_ref(), org_id).await?;
     let brand = card_brand(&org, &settings);
     let locations = wallet::locations_for_org(pool.get_ref(), org_id).await?;
-    let passes = wallet::links_for(&member, &settings, &org, &locations);
+    let passes = wallet::links_for(pool.get_ref(), &member, &settings, &org, &locations).await;
     Ok(HttpResponse::Ok().json(JoinResult {
         member_token: member.member_token.clone(),
         name: member.name.clone(),
@@ -335,7 +335,7 @@ pub async fn card(
     let org = crate::orgs::branding::load(pool.get_ref(), member.org_id).await?;
     let brand = card_brand(&org, &settings);
     let locations = wallet::locations_for_org(pool.get_ref(), member.org_id).await?;
-    let passes = wallet::links_for(&member, &settings, &org, &locations);
+    let passes = wallet::links_for(pool.get_ref(), &member, &settings, &org, &locations).await;
     let view = member.view(mode, target);
     Ok(HttpResponse::Ok().json(CardView {
         name: view.name,

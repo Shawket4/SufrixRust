@@ -234,8 +234,29 @@ pub fn balance_label(mode: crate::loyalty::earn::Mode) -> &'static str {
     }
 }
 
-/// The "Save to Google Wallet" URL, or `None` when Google is not configured.
-pub fn save_url(
+/// Google's cap on a JWT carried in a save URL.
+///
+/// Past this the save page fails — "Something went wrong", while still opening
+/// the Wallet app, which is a remarkably hard symptom to attribute. A class and
+/// an object embedded together measured about 2,150 characters for a shop with
+/// six branches, so the link was over the limit from the day it was written and
+/// grew with every branch added.
+const MAX_SAVE_JWT: usize = 1800;
+
+/// Create the class and the member's object, and return a link that REFERENCES
+/// the object rather than carrying it.
+///
+/// This is the shape Google documents for production, and it is the only shape
+/// that fits: a reference-only JWT is a few hundred characters whatever the
+/// shop looks like, so branches, a long name and a logo URL can no longer push
+/// a customer's save link over the limit.
+///
+/// The writes are idempotent and happen ONCE per member — the object id is kept
+/// on the row, so an existing member's link costs no Google calls at all. A
+/// failure here is reported and swallowed by the caller: a wallet that will not
+/// provision must not take a signup down with it.
+pub async fn save_url(
+    pool: &PgPool,
     member: &MemberRow,
     settings: &LoyaltySettings,
     brand: &OrgBrand,
@@ -244,18 +265,31 @@ pub fn save_url(
     let (Some(issuer), Some(email), Some(key)) = (issuer_id(), sa_email(), sa_key()) else {
         return Ok(None);
     };
+    let object_id = match &member.google_object_id {
+        // Already provisioned: nothing to do but sign.
+        Some(id) => id.clone(),
+        None => {
+            let token = access_token().await?;
+            ensure_class(&token, &issuer, member.org_id, brand, settings).await?;
+            let id = ensure_object(&token, &issuer, member, settings, locations).await?;
+            // Remembered so this is a one-time cost, and so `push_balance` has
+            // something to PATCH — it reads this column, which nothing used to
+            // write, so no Google pass ever saw a balance change.
+            sqlx::query("UPDATE loyalty_customers SET google_object_id = $2 WHERE id = $1")
+                .bind(member.id)
+                .bind(&id)
+                .execute(pool)
+                .await?;
+            id
+        }
+    };
+
     let claims = SaveClaims {
         iss: email,
         aud: "google",
         typ: "savetowallet",
         iat: chrono::Utc::now().timestamp().max(0) as usize,
-        // BOTH, deliberately: the class must exist before the object that
-        // points at it, and sending them together lets Google create it on the
-        // first save rather than needing a separate provisioning step.
-        payload: json!({
-            "loyaltyClasses": [loyalty_class(&issuer, member.org_id, brand, settings)],
-            "loyaltyObjects": [loyalty_object(&issuer, member, settings, locations)],
-        }),
+        payload: json!({ "loyaltyObjects": [{ "id": object_id }] }),
     };
     let encoding = EncodingKey::from_rsa_pem(&key).map_err(|e| {
         tracing::error!(error = %e, "LOYALTY_GOOGLE_SA_KEY is not a usable RSA PEM");
@@ -263,7 +297,90 @@ pub fn save_url(
     })?;
     let jwt = jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &encoding)
         .map_err(|_| AppError::Internal)?;
+    if jwt.len() > MAX_SAVE_JWT {
+        tracing::error!(
+            len = jwt.len(),
+            "loyalty: Google save JWT is over the URL limit; the save page will fail"
+        );
+    }
     Ok(Some(format!("{SAVE_URL_PREFIX}{jwt}")))
+}
+
+/// Create the org's class, or bring an existing one up to date.
+///
+/// PATCH on conflict rather than leaving it: a class created once and never
+/// touched again would keep a shop's first logo and colours forever, and there
+/// is no other moment that would notice the branding had changed.
+async fn ensure_class(
+    token: &str,
+    issuer: &str,
+    org_id: uuid::Uuid,
+    brand: &OrgBrand,
+    settings: &LoyaltySettings,
+) -> Result<(), AppError> {
+    let body = loyalty_class(issuer, org_id, brand, settings);
+    let id = class_id(issuer, org_id);
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(format!("{WALLET_API}/loyaltyClass"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AppError::ServiceUnavailable(format!("Google Wallet class: {e}")))?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    if resp.status() != reqwest::StatusCode::CONFLICT {
+        return Err(google_error("creating the loyalty class", resp).await);
+    }
+    let resp = http
+        .patch(format!("{WALLET_API}/loyaltyClass/{id}"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AppError::ServiceUnavailable(format!("Google Wallet class: {e}")))?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    Err(google_error("updating the loyalty class", resp).await)
+}
+
+/// Create the member's object. Returns its id either way.
+async fn ensure_object(
+    token: &str,
+    issuer: &str,
+    member: &MemberRow,
+    settings: &LoyaltySettings,
+    locations: &[super::PassLocation],
+) -> Result<String, AppError> {
+    let id = object_id(issuer, member);
+    let resp = reqwest::Client::new()
+        .post(format!("{WALLET_API}/loyaltyObject"))
+        .bearer_auth(token)
+        .json(&loyalty_object(issuer, member, settings, locations))
+        .send()
+        .await
+        .map_err(|e| AppError::ServiceUnavailable(format!("Google Wallet object: {e}")))?;
+    // A member re-opening their card already has one; that is a success.
+    if resp.status().is_success() || resp.status() == reqwest::StatusCode::CONFLICT {
+        return Ok(id);
+    }
+    Err(google_error("creating the loyalty object", resp).await)
+}
+
+/// Google's own words for why it refused, in the log.
+///
+/// Worth the round trip: the alternative is a status code, and every failure
+/// mode here — an unlinked service account, a wrong issuer id, a class Google
+/// will not accept — arrives as the same 400 or 403 with the reason only in the
+/// body.
+async fn google_error(what: &str, resp: reqwest::Response) -> AppError {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    tracing::error!(status = %status, body = %body, "loyalty: Google refused {what}");
+    AppError::ServiceUnavailable(format!("Google Wallet refused {what} ({status})"))
 }
 
 /// Exchange the service-account key for an access token (the JWT bearer grant).
@@ -358,10 +475,67 @@ pub async fn push_balance(pool: &PgPool, member: &MemberRow) -> Result<(), AppEr
 mod tests {
     use super::*;
 
+    /// The save link must not grow with the shop.
+    ///
+    /// It used to carry the whole class AND the whole object. For a shop with
+    /// six branches that measured about 2,150 characters against Google's
+    /// ~1,800 limit for a JWT in a save URL — so the save page failed with
+    /// "Something went wrong" while still opening the Wallet app, and every
+    /// branch added made it worse. The link now references an object Google
+    /// already holds, so its size is fixed whatever the shop looks like.
     #[test]
-    fn the_save_payload_carries_the_class_as_well_as_the_object() {
-        // Google refuses an object whose class does not exist, and the customer
-        // sees only a dead link. The class must ride along.
+    fn the_save_link_references_the_object_rather_than_carrying_it() {
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
+        let brand = OrgBrand {
+            name: "RUE Coffee".into(),
+            logo_url: Some(
+                "https://api.madar-pos.cloud/uploads/logos/3f2a1b8c-7d4e-4a91-bc22-0e5f61a8d904.png"
+                    .into(),
+            ),
+            palette: crate::orgs::branding::Palette::default(),
+            logo_is_mark: true,
+        };
+        let m = super::super::apple::tests::member();
+        let locs: Vec<super::super::PassLocation> = (0..6)
+            .map(|i| super::super::PassLocation {
+                name: format!("RUE Coffee — Branch {i}"),
+                latitude: 30.0444 + i as f64 * 0.01,
+                longitude: 31.2357 + i as f64 * 0.01,
+            })
+            .collect();
+
+        // Base64 costs a third on top, and an RS256 signature adds ~350 chars.
+        let as_jwt = |v: &serde_json::Value| {
+            let raw = serde_json::to_string(v).unwrap();
+            40 + raw.len().div_ceil(3) * 4 + 350
+        };
+
+        // What we send now: an id, and nothing else.
+        let reference =
+            json!({ "loyaltyObjects": [{ "id": object_id("3388000000022345678", &m) }] });
+        assert!(
+            as_jwt(&reference) < MAX_SAVE_JWT,
+            "a reference link must fit: {}",
+            as_jwt(&reference)
+        );
+
+        // What we used to send, on the same shop. Kept as a measurement, so the
+        // reason for the REST provisioning is checkable rather than folklore.
+        let embedded = json!({
+            "loyaltyClasses": [loyalty_class("3388000000022345678", uuid::Uuid::nil(), &brand, &s)],
+            "loyaltyObjects": [loyalty_object("3388000000022345678", &m, &s, &locs)],
+        });
+        assert!(
+            as_jwt(&embedded) > MAX_SAVE_JWT,
+            "embedding the card was over the limit, which is why it is gone: {}",
+            as_jwt(&embedded)
+        );
+    }
+
+    /// The class Google is asked to hold: whose card it is, and what it looks
+    /// like. Sent over REST before the first save, not embedded in the link.
+    #[test]
+    fn the_class_carries_the_shop_and_a_review_status_google_accepts() {
         let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let brand = OrgBrand {
             name: "RUE Coffee".into(),

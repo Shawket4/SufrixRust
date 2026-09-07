@@ -175,32 +175,45 @@ pub fn absolute_api_url(path: &str) -> Option<String> {
 }
 
 /// Build both "add to wallet" links for a member.
-pub fn links_for(
+/// Where a member's `.pkpass` is downloaded, when Apple is configured.
+///
+/// Relative to the site root, and under `/api/` — which is what nginx proxies
+/// to the backend. Two things this deliberately is NOT:
+///
+///   * not a PAGE path (`/pass/…`), which falls through to the SPA fallback
+///     and hands the customer an HTML document iOS refuses without a word;
+///   * not absolute, so it does NOT depend on `PUBLIC_LOYALTY_BASE_URL`. The
+///     page is served from this same origin, so signing a pass is all it takes
+///     to offer one. The base URL is for the COUNTER QR's target and the pass's
+///     self-update address — not for handing over the file.
+pub fn apple_link(member: &MemberRow) -> Option<String> {
+    apple::is_configured().then(|| {
+        format!(
+            "/api/public/loyalty/pass/{}/apple.pkpass",
+            member.member_token
+        )
+    })
+}
+
+pub async fn links_for(
+    pool: &PgPool,
     member: &MemberRow,
     settings: &LoyaltySettings,
     brand: &crate::orgs::branding::OrgBrand,
     locations: &[PassLocation],
 ) -> PassLinks {
-    // Relative to the site root, and under `/api/` — which is what nginx proxies
-    // to the backend. Two things this deliberately is NOT:
-    //
-    //   * not a PAGE path (`/pass/…`), which falls through to the SPA fallback
-    //     and hands the customer an HTML document iOS refuses without a word;
-    //   * not absolute, so it does NOT depend on `PUBLIC_LOYALTY_BASE_URL`. The
-    //     page is served from this same origin, so signing a pass is all it
-    //     takes to offer one. The base URL is for the COUNTER QR's target and
-    //     the pass's self-update address — not for handing over the file.
-    let apple_url = apple::is_configured().then(|| {
-        format!(
-            "/api/public/loyalty/pass/{}/apple.pkpass",
-            member.member_token
-        )
-    });
-    let google_url = google::save_url(member, settings, brand, locations).unwrap_or_else(|e| {
-        // A misconfigured issuer must not take the signup down with it.
-        tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
-        None
-    });
+    let apple_url = apple_link(member);
+    // Provisioning talks to Google, so it can fail in ways a signup must
+    // survive: an unlinked service account, a refused class, a network blip.
+    // The customer gets the Apple badge and the code on their card either way,
+    // and the reason lands in the log rather than in their face.
+    let google_url = match google::save_url(pool, member, settings, brand, locations).await {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
+            None
+        }
+    };
     PassLinks {
         any: apple_url.is_some() || google_url.is_some(),
         apple_url,
@@ -355,19 +368,11 @@ mod tests {
             std::env::set_var("LOYALTY_APPLE_KEY_PEM", "x");
             std::env::set_var("LOYALTY_APPLE_WWDR_PEM", "x");
         }
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
-        let links = links_for(
-            &member(),
-            &s,
-            &crate::orgs::branding::OrgBrand::default(),
-            &[],
-        );
         assert_eq!(
-            links.apple_url.as_deref(),
+            apple_link(&member()).as_deref(),
             Some("/api/public/loyalty/pass/Mabcdefghijklmnopqrstuv/apple.pkpass"),
             "certificates alone must be enough to offer the pass"
         );
-        assert!(links.any);
 
         // With nothing configured at all, no buttons: the page shows the
         // member's QR instead, which still works at the till.
@@ -378,16 +383,9 @@ mod tests {
             std::env::remove_var("LOYALTY_APPLE_KEY_PEM");
             std::env::remove_var("LOYALTY_APPLE_WWDR_PEM");
         }
-        let bare = links_for(
-            &member(),
-            &s,
-            &crate::orgs::branding::OrgBrand::default(),
-            &[],
-        );
-        assert!(bare.apple_url.is_none());
         assert!(
-            !bare.any,
-            "no wallet configured means the QR fallback, not a dead button"
+            apple_link(&member()).is_none(),
+            "no certificate means no Apple link — the card still carries its code"
         );
     }
 

@@ -556,10 +556,10 @@ pub async fn notify_devices(pool: &PgPool, member: &MemberRow) -> Result<(), App
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn member() -> MemberRow {
+    pub(crate) fn member() -> MemberRow {
         MemberRow {
             id: uuid::Uuid::nil(),
             org_id: uuid::Uuid::nil(),
