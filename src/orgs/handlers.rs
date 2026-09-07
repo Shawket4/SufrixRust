@@ -577,13 +577,23 @@ pub async fn upload_org_logo(
     }
     let claims = extract_claims(&req)?;
     check_permission(pool.get_ref(), &claims, "orgs", "update").await?;
-    require_super_admin(&claims)?;
+    // The logo is the ONE piece of an organisation a manager owns: it is their
+    // shop's mark, it appears on their receipts and their loyalty cards, and
+    // waiting on a super admin to change it helps nobody. Everything else about
+    // an organisation stays super-admin only — so this is scoped to their OWN
+    // org rather than lifting the guard.
+    if claims.role != crate::models::UserRole::SuperAdmin && claims.org_id() != Some(*org_id) {
+        return Err(AppError::Forbidden(
+            "You can only change your own organisation's logo".into(),
+        ));
+    }
 
     let existing = fetch_org(pool.get_ref(), *org_id).await?;
     let uploads_dir = std::env::var("UPLOADS_DIR").unwrap_or_else(|_| "./uploads".to_string());
     let base_url = std::env::var("UPLOADS_BASE_URL").unwrap_or_default();
 
     let mut new_logo_url: Option<String> = None;
+    let mut logo_bytes: Vec<u8> = Vec::new();
 
     while let Some(mut field) = mp
         .try_next()
@@ -622,22 +632,38 @@ pub async fn upload_org_logo(
                 base_url.trim_end_matches('/'),
                 filename,
             ));
+            logo_bytes = bytes;
         }
     }
 
     let new_logo_url = new_logo_url
         .ok_or_else(|| AppError::BadRequest("No logo file received in field 'logo'".into()))?;
 
+    // Read the brand palette straight out of the bytes we were just handed: no
+    // fetch, so no stale cache and no server-side request to an address someone
+    // else supplied. A logo we cannot decode, or one with no colour in it (a
+    // plain black mark is common), leaves the columns NULL and the card falls
+    // back to Madar's palette — a finished card, not a broken one.
+    let palette = image::load_from_memory(&logo_bytes)
+        .ok()
+        .as_ref()
+        .and_then(crate::orgs::branding::palette_from_image);
+
     let org = sqlx::query_as::<_, Org>(
         r#"
         UPDATE organizations
-        SET logo_url = $2, updated_at = NOW()
+        SET logo_url = $2, updated_at = NOW(),
+            brand_background = $3, brand_foreground = $4, brand_accent = $5,
+            brand_logo_source = $2
         WHERE id = $1 AND deleted_at IS NULL
         RETURNING id, name, slug, logo_url, currency_code, tax_rate, receipt_footer, is_active, timezone::text AS timezone
         "#,
     )
     .bind(*org_id)
     .bind(&new_logo_url)
+    .bind(palette.as_ref().map(|p| p.background.clone()))
+    .bind(palette.as_ref().map(|p| p.foreground.clone()))
+    .bind(palette.as_ref().map(|p| p.accent.clone()))
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or_else(|| AppError::NotFound("Org not found".into()))?;

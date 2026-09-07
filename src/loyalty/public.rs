@@ -77,29 +77,37 @@ pub struct CardBrand {
     pub label_color: Option<String>,
 }
 
-impl CardBrand {
-    fn of(org_name: String, s: &super::settings::LoyaltySettings) -> Self {
-        Self {
-            org_name,
-            program_name: s.program_name.clone(),
-            program_name_ar: s.program_name_ar.clone(),
-            logo_url: s.pass_logo_url.clone(),
-            background_color: s.pass_background_color.clone(),
-            foreground_color: s.pass_foreground_color.clone(),
-            label_color: s.pass_label_color.clone(),
-        }
-    }
-}
-
-/// The organisation's display name.
-async fn org_name(pool: &PgPool, org_id: Uuid) -> Result<String, AppError> {
-    Ok(
-        sqlx::query_scalar("SELECT name FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or_default(),
-    )
+/// The organisation's own identity: its name, its logo, and the palette derived
+/// from that logo when it was uploaded.
+///
+/// Branding lives on the ORGANISATION, not on the loyalty programme. A shop has
+/// one mark and one set of colours; asking them to configure it again per
+/// feature is how two surfaces end up disagreeing about who the shop is. The
+/// colours are DERIVED from the logo (`orgs::branding`), so there is nothing to
+/// set and no way to pick two nobody can read.
+async fn load_brand(
+    pool: &PgPool,
+    org_id: Uuid,
+    s: &super::settings::LoyaltySettings,
+) -> Result<CardBrand, AppError> {
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT name, logo_url, brand_background, brand_foreground, brand_accent \
+               FROM organizations WHERE id = $1",
+        )
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await?;
+    let (org_name, logo_url, background, foreground, accent) = row.unwrap_or_default();
+    Ok(CardBrand {
+        org_name,
+        program_name: s.program_name.clone(),
+        program_name_ar: s.program_name_ar.clone(),
+        logo_url,
+        background_color: background,
+        foreground_color: foreground,
+        label_color: accent,
+    })
 }
 
 /// A reward as the signup page lists it: what it is, and what it costs.
@@ -124,7 +132,7 @@ pub async fn join_info(
     .bind(query.branch_id)
     .fetch_optional(pool.get_ref())
     .await?;
-    let (branch_name, org_name) =
+    let (branch_name, _org_name) =
         names.ok_or_else(|| AppError::NotFound("Branch not found".into()))?;
 
     let settings = load_effective(pool.get_ref(), org_id, query.branch_id).await?;
@@ -133,7 +141,7 @@ pub async fn join_info(
     Ok(HttpResponse::Ok().json(JoinInfo {
         branch_id: query.branch_id,
         branch_name,
-        brand: CardBrand::of(org_name, &settings),
+        brand: load_brand(pool.get_ref(), org_id, &settings).await?,
         enabled: settings.enabled,
         require_otp: settings.require_otp,
         mode: settings.mode.clone(),
@@ -255,7 +263,7 @@ pub async fn join(
 
     let (rewards, _) = load_effective_rewards(pool.get_ref(), org_id, body.branch_id).await?;
     let mode = settings.mode();
-    let brand = CardBrand::of(org_name(pool.get_ref(), org_id).await?, &settings);
+    let brand = load_brand(pool.get_ref(), org_id, &settings).await?;
     let locations = wallet::locations_for_org(pool.get_ref(), org_id).await?;
     let passes = wallet::links_for(&member, &settings, &brand.org_name, &locations);
     Ok(HttpResponse::Ok().json(JoinResult {
@@ -310,7 +318,7 @@ pub async fn card(
         super::settings::load_effective_rewards_org(pool.get_ref(), member.org_id).await?;
     let mode = settings.mode();
     let target = model::cheapest_cost(&catalogue, mode).unwrap_or(settings.default_reward_cost);
-    let brand = CardBrand::of(org_name(pool.get_ref(), member.org_id).await?, &settings);
+    let brand = load_brand(pool.get_ref(), member.org_id, &settings).await?;
     let locations = wallet::locations_for_org(pool.get_ref(), member.org_id).await?;
     let passes = wallet::links_for(&member, &settings, &brand.org_name, &locations);
     let view = member.view(mode, target);

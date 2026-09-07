@@ -1,3 +1,4 @@
+pub mod branding;
 pub mod handlers;
 pub mod onboarding;
 pub mod routes;

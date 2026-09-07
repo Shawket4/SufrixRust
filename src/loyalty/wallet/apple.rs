@@ -13,7 +13,6 @@
 
 use serde_json::json;
 use sqlx::PgPool;
-use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::loyalty::model::MemberRow;
@@ -421,8 +420,8 @@ mod tests {
 
     fn member() -> MemberRow {
         MemberRow {
-            id: Uuid::nil(),
-            org_id: Uuid::nil(),
+            id: uuid::Uuid::nil(),
+            org_id: uuid::Uuid::nil(),
             name: "Ali Hassan".into(),
             phone: "+201000000000".into(),
             member_token: "Mabcdefghijklmnopqrstuv".into(),
@@ -458,7 +457,7 @@ mod tests {
     fn balance_is_primary_and_progress_is_secondary() {
         let _guard = env_guard();
         configured();
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
         assert_eq!(p["storeCard"]["primaryFields"][0]["value"], 30);
         assert_eq!(
@@ -472,7 +471,7 @@ mod tests {
     fn a_stamp_card_is_explained_in_stamps_not_pounds() {
         let _guard = env_guard();
         configured();
-        let mut s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let mut s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         s.mode = "visits".into();
         s.default_reward_cost = 5;
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
@@ -494,20 +493,20 @@ mod tests {
     fn the_barcode_carries_the_token_not_the_id() {
         let _guard = env_guard();
         configured();
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
         assert_eq!(p["barcodes"][0]["message"], "Mabcdefghijklmnopqrstuv");
         assert_eq!(p["barcodes"][0]["format"], "PKBarcodeFormatQR");
         // The member id must never be the scannable value — it is guessable
         // from any other API response that carries one.
-        assert_ne!(p["barcodes"][0]["message"], Uuid::nil().to_string());
+        assert_ne!(p["barcodes"][0]["message"], uuid::Uuid::nil().to_string());
     }
 
     #[test]
     fn branch_coordinates_become_lock_screen_locations() {
         let _guard = env_guard();
         configured();
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let locs = vec![PassLocation {
             latitude: 30.0444,
             longitude: 31.2357,
@@ -535,7 +534,7 @@ mod tests {
     fn a_pass_is_refused_rather_than_served_unsigned() {
         let _guard = env_guard();
         configured();
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let p = pass_json(&member(), &s, &[], &[]).unwrap();
         // With no certificate configured, building an archive must fail loudly.
         // An unsigned .pkpass is rejected by iOS with no explanation at all, so
@@ -587,7 +586,7 @@ mod tests {
             );
         }
 
-        let s = LoyaltySettings::defaults(Uuid::nil(), None);
+        let s = LoyaltySettings::defaults(uuid::Uuid::nil(), None);
         let pass = pass_json(&member(), &s, &[], &[]).unwrap();
         let bytes = build_pkpass(&pass).unwrap();
 
