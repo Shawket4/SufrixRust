@@ -515,10 +515,9 @@ mod tests {
         // The stamps balance leads, not the points one.
         assert_eq!(p["storeCard"]["primaryFields"][0]["value"], 3);
         assert_eq!(p["storeCard"]["primaryFields"][0]["label"], "Orders");
-        assert_eq!(
-            p["storeCard"]["secondaryFields"][0]["value"],
-            "3 / 5 to your next reward"
-        );
+        // A stamp card reads as a punch card, not as arithmetic: five orders
+        // is few enough to count at a glance.
+        assert_eq!(p["storeCard"]["secondaryFields"][0]["value"], "●●●○○   3 / 5");
         let how = p["storeCard"]["backFields"][0]["value"].as_str().unwrap();
         assert!(how.contains("stamp"), "{how}");
         assert!(

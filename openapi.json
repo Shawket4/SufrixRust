@@ -44115,6 +44115,55 @@
           }
         }
       },
+      "CardBrand": {
+        "type": "object",
+        "description": "How a tenant's card should look.\n\nEvery field is optional and the site falls back to Madar's own palette, so a\ntenant who has set nothing still gets a finished card rather than an\nunstyled one. `org_name` is NOT optional: whose card this is must always be\non it, however little else has been configured.",
+        "required": [
+          "org_name",
+          "program_name"
+        ],
+        "properties": {
+          "background_color": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`#RRGGBB`, validated on write."
+          },
+          "foreground_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "org_name": {
+            "type": "string",
+            "description": "The organisation's name. Always present."
+          },
+          "program_name": {
+            "type": "string",
+            "description": "What the programme calls itself (\"Rewards\", \"Bean Club\")."
+          },
+          "program_name_ar": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CardView": {
         "type": "object",
         "description": "The member's own card page — what they see when they open the link again.\n\nThe token in the path is the member's secret, which is why this returns only\nwhat the pass already shows and never the phone number in full.",
@@ -44125,16 +44174,20 @@
           "next_reward_cost",
           "points_to_next_reward",
           "can_redeem",
-          "program_name",
           "member_token",
           "rewards",
-          "passes"
+          "passes",
+          "brand"
         ],
         "properties": {
           "balance": {
             "type": "integer",
             "format": "int32",
             "description": "The live balance, in `mode`'s currency."
+          },
+          "brand": {
+            "$ref": "#/components/schemas/CardBrand",
+            "description": "Whose card this is, and how it should look."
           },
           "can_redeem": {
             "type": "boolean"
@@ -44158,9 +44211,6 @@
           "points_to_next_reward": {
             "type": "integer",
             "format": "int32"
-          },
-          "program_name": {
-            "type": "string"
           },
           "rewards": {
             "type": "array",
@@ -49625,8 +49675,7 @@
         "required": [
           "branch_id",
           "branch_name",
-          "org_name",
-          "program_name",
+          "brand",
           "enabled",
           "require_otp",
           "mode",
@@ -49641,6 +49690,10 @@
           },
           "branch_name": {
             "type": "string"
+          },
+          "brand": {
+            "$ref": "#/components/schemas/CardBrand",
+            "description": "Whose programme this is, and how the page should look."
           },
           "earn_piastres_per_point": {
             "type": "integer",
@@ -49659,18 +49712,6 @@
             "type": "integer",
             "format": "int32",
             "description": "The cheapest reward on offer, in `mode`'s currency."
-          },
-          "org_name": {
-            "type": "string"
-          },
-          "program_name": {
-            "type": "string"
-          },
-          "program_name_ar": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "require_otp": {
             "type": "boolean",
@@ -49740,7 +49781,7 @@
           "balance",
           "mode",
           "next_reward_cost",
-          "program_name",
+          "brand",
           "passes",
           "already_member"
         ],
@@ -49753,6 +49794,9 @@
             "type": "integer",
             "format": "int32",
             "description": "The live balance, in `mode`'s currency. Zero for a fresh member."
+          },
+          "brand": {
+            "$ref": "#/components/schemas/CardBrand"
           },
           "member_token": {
             "type": "string"
@@ -49769,9 +49813,6 @@
           },
           "passes": {
             "$ref": "#/components/schemas/PassLinks"
-          },
-          "program_name": {
-            "type": "string"
           }
         }
       },
@@ -53645,7 +53686,7 @@
               "string",
               "null"
             ],
-            "description": "Downloads the signed `.pkpass`."
+            "description": "Downloads the signed `.pkpass`. Site-relative, because the signup page\nis served from the same origin as the API — so a pass needs a\nCERTIFICATE, not a configured base URL."
           },
           "google_url": {
             "type": [

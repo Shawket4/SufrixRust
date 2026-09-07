@@ -108,12 +108,33 @@ pub fn loyalty_object(
     })
 }
 
-/// "30 / 100 to your next reward", or the earned line once it is reached.
+/// A stamp card drawn in text, when the target is small enough to read as one.
+///
+/// "●●●○○" says "three of five orders" at a glance in a way "3 / 5" does not —
+/// it is the paper punch card everyone already understands. Above
+/// [`MAX_STAMPS`] the dots stop being countable and become noise, so a points
+/// programme (100, 250…) keeps the plain figure.
+const MAX_STAMPS: i32 = 12;
+
+pub fn stamps(balance: i32, threshold: i32) -> Option<String> {
+    if threshold <= 0 || threshold > MAX_STAMPS {
+        return None;
+    }
+    let filled = balance.clamp(0, threshold);
+    Some(
+        "●".repeat(filled as usize) + &"○".repeat((threshold - filled).max(0) as usize),
+    )
+}
+
+/// "30 / 100 to your next reward", or the earned line once it is reached. A
+/// small target gets the punch card instead of the arithmetic.
 pub fn progress_line(balance: i32, threshold: i32) -> String {
     if threshold > 0 && balance >= threshold {
-        "Reward earned — ask at the counter".to_string()
-    } else {
-        format!("{balance} / {threshold} to your next reward")
+        return "Reward earned — ask at the counter".to_string();
+    }
+    match stamps(balance, threshold) {
+        Some(dots) => format!("{dots}   {balance} / {threshold}"),
+        None => format!("{balance} / {threshold} to your next reward"),
     }
 }
 

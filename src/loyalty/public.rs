@@ -35,9 +35,8 @@ pub struct BranchQuery {
 pub struct JoinInfo {
     pub branch_id: Uuid,
     pub branch_name: String,
-    pub org_name: String,
-    pub program_name: String,
-    pub program_name_ar: Option<String>,
+    /// Whose programme this is, and how the page should look.
+    pub brand: CardBrand,
     /// False when the program is off here — the page says so instead of taking
     /// a signup that would go nowhere.
     pub enabled: bool,
@@ -56,6 +55,51 @@ pub struct JoinInfo {
     pub rewards: Vec<PublicReward>,
     pub terms: Option<String>,
     pub terms_ar: Option<String>,
+}
+
+/// How a tenant's card should look.
+///
+/// Every field is optional and the site falls back to Madar's own palette, so a
+/// tenant who has set nothing still gets a finished card rather than an
+/// unstyled one. `org_name` is NOT optional: whose card this is must always be
+/// on it, however little else has been configured.
+#[derive(Serialize, ToSchema, Clone)]
+pub struct CardBrand {
+    /// The organisation's name. Always present.
+    pub org_name: String,
+    /// What the programme calls itself ("Rewards", "Bean Club").
+    pub program_name: String,
+    pub program_name_ar: Option<String>,
+    pub logo_url: Option<String>,
+    /// `#RRGGBB`, validated on write.
+    pub background_color: Option<String>,
+    pub foreground_color: Option<String>,
+    pub label_color: Option<String>,
+}
+
+impl CardBrand {
+    fn of(org_name: String, s: &super::settings::LoyaltySettings) -> Self {
+        Self {
+            org_name,
+            program_name: s.program_name.clone(),
+            program_name_ar: s.program_name_ar.clone(),
+            logo_url: s.pass_logo_url.clone(),
+            background_color: s.pass_background_color.clone(),
+            foreground_color: s.pass_foreground_color.clone(),
+            label_color: s.pass_label_color.clone(),
+        }
+    }
+}
+
+/// The organisation's display name.
+async fn org_name(pool: &PgPool, org_id: Uuid) -> Result<String, AppError> {
+    Ok(
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_default(),
+    )
 }
 
 /// A reward as the signup page lists it: what it is, and what it costs.
@@ -89,9 +133,7 @@ pub async fn join_info(
     Ok(HttpResponse::Ok().json(JoinInfo {
         branch_id: query.branch_id,
         branch_name,
-        org_name,
-        program_name: settings.program_name.clone(),
-        program_name_ar: settings.program_name_ar.clone(),
+        brand: CardBrand::of(org_name, &settings),
         enabled: settings.enabled,
         require_otp: settings.require_otp,
         mode: settings.mode.clone(),
@@ -134,7 +176,7 @@ pub struct JoinResult {
     pub balance: i32,
     pub mode: String,
     pub next_reward_cost: i32,
-    pub program_name: String,
+    pub brand: CardBrand,
     pub passes: PassLinks,
     /// True when this phone was already a member — the page says "welcome back"
     /// and shows the existing card rather than pretending to have made a new one.
@@ -221,7 +263,7 @@ pub async fn join(
         mode: settings.mode.clone(),
         next_reward_cost: model::cheapest_cost(&rewards, mode)
             .unwrap_or(settings.default_reward_cost),
-        program_name: settings.program_name.clone(),
+        brand: CardBrand::of(org_name(pool.get_ref(), org_id).await?, &settings),
         passes,
         already_member,
     }))
@@ -240,10 +282,11 @@ pub struct CardView {
     pub next_reward_cost: i32,
     pub points_to_next_reward: i32,
     pub can_redeem: bool,
-    pub program_name: String,
     pub member_token: String,
     pub rewards: Vec<PublicReward>,
     pub passes: PassLinks,
+    /// Whose card this is, and how it should look.
+    pub brand: CardBrand,
 }
 
 #[utoipa::path(get, path = "/public/loyalty/card/{token}", tag = "loyalty-public", operation_id = "loyalty_card",
@@ -266,6 +309,7 @@ pub async fn card(
     let mode = settings.mode();
     let target = model::cheapest_cost(&catalogue, mode).unwrap_or(settings.default_reward_cost);
     let passes = wallet::links_for(&member, &settings);
+    let brand = CardBrand::of(org_name(pool.get_ref(), member.org_id).await?, &settings);
     let view = member.view(mode, target);
     Ok(HttpResponse::Ok().json(CardView {
         name: view.name,
@@ -274,7 +318,7 @@ pub async fn card(
         next_reward_cost: view.next_reward_cost,
         points_to_next_reward: view.points_to_next_reward,
         can_redeem: view.can_redeem,
-        program_name: settings.program_name,
+        brand,
         member_token: token.into_inner(),
         rewards: catalogue
             .into_iter()

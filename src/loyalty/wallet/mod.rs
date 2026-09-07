@@ -30,7 +30,9 @@ use crate::errors::AppError;
 /// Google credentials configured shows one button, not a broken one.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PassLinks {
-    /// Downloads the signed `.pkpass`.
+    /// Downloads the signed `.pkpass`. Site-relative, because the signup page
+    /// is served from the same origin as the API — so a pass needs a
+    /// CERTIFICATE, not a configured base URL.
     pub apple_url: Option<String>,
     /// `https://pay.google.com/gp/v/save/<jwt>`.
     pub google_url: Option<String>,
@@ -51,20 +53,21 @@ pub fn loyalty_base() -> Option<String> {
 
 /// Build both "add to wallet" links for a member.
 pub fn links_for(member: &MemberRow, settings: &LoyaltySettings) -> PassLinks {
-    // The API path, not a page path: this URL is fetched, not navigated to, and
-    // `/api/` is what nginx proxies to the backend. A site-relative path here
-    // hits the SPA fallback and hands the customer an HTML document that iOS
-    // quietly refuses to open.
-    let apple_url = apple::is_configured()
-        .then(|| {
-            loyalty_base().map(|b| {
-                format!(
-                    "{b}/api/public/loyalty/pass/{}/apple.pkpass",
-                    member.member_token
-                )
-            })
-        })
-        .flatten();
+    // Relative to the site root, and under `/api/` — which is what nginx proxies
+    // to the backend. Two things this deliberately is NOT:
+    //
+    //   * not a PAGE path (`/pass/…`), which falls through to the SPA fallback
+    //     and hands the customer an HTML document iOS refuses without a word;
+    //   * not absolute, so it does NOT depend on `PUBLIC_LOYALTY_BASE_URL`. The
+    //     page is served from this same origin, so signing a pass is all it
+    //     takes to offer one. The base URL is for the COUNTER QR's target and
+    //     the pass's self-update address — not for handing over the file.
+    let apple_url = apple::is_configured().then(|| {
+        format!(
+            "/api/public/loyalty/pass/{}/apple.pkpass",
+            member.member_token
+        )
+    });
     let google_url = google::save_url(member, settings).unwrap_or_else(|e| {
         // A misconfigured issuer must not take the signup down with it.
         tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
@@ -151,20 +154,22 @@ mod tests {
         }
     }
 
-    /// The Apple link must be the API path, reachable through nginx's `/api/`
-    /// proxy — not a site-relative one.
+    /// The Apple link is the API path, and a CERTIFICATE is all it takes.
     ///
-    /// A page path falls through to the SPA fallback and hands the customer an
-    /// HTML document, which iOS refuses to open with no message at all. That is
-    /// indistinguishable from "the certificates are wrong", so it is worth a
-    /// test rather than a debugging session.
+    /// Two things this pins. It must not be a page path — that falls through to
+    /// the SPA fallback and hands the customer an HTML document iOS refuses
+    /// with no message, which looks exactly like a certificate problem. And it
+    /// must not depend on `PUBLIC_LOYALTY_BASE_URL`: the page is same-origin,
+    /// so requiring an absolute URL made a working set of certificates look
+    /// broken for no reason.
     #[test]
-    fn the_apple_link_points_at_the_api_not_the_page() {
+    fn the_apple_link_points_at_the_api_and_needs_no_base_url() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: the lock above makes this the only thread touching the wallet
         // environment for the duration.
         unsafe {
-            std::env::set_var("PUBLIC_LOYALTY_BASE_URL", "https://loyalty.example.com");
+            // Deliberately NOT set: a pass needs a certificate, not this.
+            std::env::remove_var("PUBLIC_LOYALTY_BASE_URL");
             std::env::set_var("LOYALTY_APPLE_PASS_TYPE_ID", "pass.example");
             std::env::set_var("LOYALTY_APPLE_TEAM_ID", "TEAM123456");
             std::env::set_var("LOYALTY_APPLE_CERT_PEM", "x");
@@ -175,21 +180,12 @@ mod tests {
         let links = links_for(&member(), &s);
         assert_eq!(
             links.apple_url.as_deref(),
-            Some(
-                "https://loyalty.example.com/api/public/loyalty/pass/\
-                 Mabcdefghijklmnopqrstuv/apple.pkpass"
-                    .replace(' ', "")
-                    .as_str()
-            )
+            Some("/api/public/loyalty/pass/Mabcdefghijklmnopqrstuv/apple.pkpass"),
+            "certificates alone must be enough to offer the pass"
         );
         assert!(links.any);
 
-        // With no base URL there is nothing to link to, and offering a dead
-        // button is worse than offering the QR fallback.
-        unsafe { std::env::remove_var("PUBLIC_LOYALTY_BASE_URL") };
-        assert!(links_for(&member(), &s).apple_url.is_none());
-
-        // ...and with nothing configured at all, no buttons: the page shows the
+        // With nothing configured at all, no buttons: the page shows the
         // member's QR instead, which still works at the till.
         unsafe {
             std::env::remove_var("LOYALTY_APPLE_PASS_TYPE_ID");
