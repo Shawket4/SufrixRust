@@ -302,6 +302,28 @@ pub async fn put_settings(
     .fetch_one(pool.get_ref())
     .await?;
 
+    // A program collects ONE thing. Changing what it collects re-prices this
+    // scope's catalogue in the new currency rather than leaving rows stamped
+    // with the old one — reads resolve the mode anyway, so this only stops the
+    // stored data from disagreeing with what everyone is shown.
+    //
+    // The AMOUNTS are left alone deliberately: "espresso, 5" was the admin's
+    // number, and rewriting it to a default would be a worse surprise than
+    // carrying it across. It is also exactly what the dashboard has been
+    // displaying since the mode changed.
+    sqlx::query(
+        "UPDATE loyalty_reward_items SET cost_currency = $3 \
+          WHERE org_id = $1 \
+            AND COALESCE(branch_id, '00000000-0000-0000-0000-000000000000'::uuid) \
+              = COALESCE($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid) \
+            AND cost_currency <> $3",
+    )
+    .bind(org_id)
+    .bind(incoming.branch_id)
+    .bind(row.mode.as_str())
+    .execute(pool.get_ref())
+    .await?;
+
     Ok(HttpResponse::Ok().json(LoyaltySettings::from(row)))
 }
 
@@ -344,6 +366,13 @@ pub struct RewardItem {
     /// Menu price in piastres — what the reward is worth, for the admin's sake.
     pub base_price: i32,
     /// `"points"` or `"visits"` — what this reward is bought with.
+    ///
+    /// Always the currency of the scope this was READ through, never whatever
+    /// the row happened to be written with. A program has one mode
+    /// ([`LoyaltySettings::mode`]) and a reward is priced in it; the stored
+    /// column is a record of intent, not an independent fact, and letting the
+    /// two disagree is what made a whole catalogue vanish from the till while
+    /// the dashboard still listed it.
     pub cost_currency: String,
     /// How much of that currency it costs. Per item, so one catalogue holds
     /// "espresso, 5 visits" beside "cake, 10 visits".
@@ -368,9 +397,21 @@ async fn load_reward_rows<'e, E>(
 where
     E: sqlx::PgExecutor<'e>,
 {
-    let rows: Vec<(Uuid, String, Option<String>, i32, String, i32, i32)> = sqlx::query_as(
-        "SELECT m.id, m.name, m.image_url, m.base_price, r.cost_currency, r.cost_amount, \
-                r.sort_order \
+    // `RewardItem` is the wire shape and carries `cost_currency` as the SCOPE's,
+    // so it is not what a row deserialises into — this reads the row.
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        menu_item_id: Uuid,
+        name: String,
+        image_url: Option<String>,
+        base_price: i32,
+        cost_currency: String,
+        cost_amount: i32,
+        sort_order: i32,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT m.id AS menu_item_id, m.name, m.image_url, m.base_price, r.cost_currency, \
+                r.cost_amount, r.sort_order \
            FROM loyalty_reward_items r JOIN menu_items m ON m.id = r.menu_item_id \
           WHERE r.org_id = $1 \
             AND COALESCE(r.branch_id, '00000000-0000-0000-0000-000000000000'::uuid) \
@@ -384,27 +425,15 @@ where
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(
-                menu_item_id,
-                name,
-                image_url,
-                base_price,
-                cost_currency,
-                cost_amount,
-                sort_order,
-            )| {
-                RewardItem {
-                    menu_item_id,
-                    name,
-                    image_url,
-                    base_price,
-                    cost_currency,
-                    cost_amount,
-                    sort_order,
-                }
-            },
-        )
+        .map(|r| RewardItem {
+            menu_item_id: r.menu_item_id,
+            name: r.name,
+            image_url: r.image_url,
+            base_price: r.base_price,
+            cost_currency: r.cost_currency,
+            cost_amount: r.cost_amount,
+            sort_order: r.sort_order,
+        })
         .collect())
 }
 
@@ -416,11 +445,39 @@ pub async fn load_effective_rewards(
     org_id: Uuid,
     branch_id: Uuid,
 ) -> Result<(Vec<RewardItem>, bool), AppError> {
+    let mode = load_effective(pool, org_id, branch_id).await?.mode();
     let own = load_reward_rows(pool, org_id, Some(branch_id)).await?;
     if !own.is_empty() {
-        return Ok((own, false));
+        return Ok((in_mode(own, mode), false));
     }
-    Ok((load_reward_rows(pool, org_id, None).await?, true))
+    Ok((
+        in_mode(load_reward_rows(pool, org_id, None).await?, mode),
+        true,
+    ))
+}
+
+/// Price a catalogue in the currency of the scope reading it.
+///
+/// A program collects ONE thing, and a reward is priced in whatever that is.
+/// The stored `cost_currency` is a copy of the scope's mode taken when the
+/// catalogue was last saved, and nothing kept the two in step: switch a program
+/// from points to stamps, or add rewards before setting the mode, and every row
+/// still says `points` while the settings say `visits`.
+///
+/// Reading a row's own currency then meant three separate filters silently
+/// dropping the entire catalogue — the till offered nothing, and the card's
+/// target fell back to the default because `cheapest_cost` matched nothing
+/// either. The dashboard meanwhile relabelled the same rows with the CURRENT
+/// mode, so it showed a perfectly healthy list. Nothing anywhere said why.
+///
+/// Resolving the currency from the scope on every read makes the disagreement
+/// unrepresentable rather than merely unlikely. It is also what the dashboard
+/// has been displaying all along, so this makes that display true.
+fn in_mode(mut items: Vec<RewardItem>, mode: Mode) -> Vec<RewardItem> {
+    for i in &mut items {
+        i.cost_currency = mode.as_str().to_string();
+    }
+    items
 }
 
 #[utoipa::path(get, path = "/loyalty/reward-items", tag = "loyalty", operation_id = "get_loyalty_reward_items",
@@ -438,7 +495,12 @@ pub async fn get_reward_items(
             require_branch_access(pool.get_ref(), &claims, b).await?;
             load_effective_rewards(pool.get_ref(), org_id, b).await?
         }
-        None => (load_reward_rows(pool.get_ref(), org_id, None).await?, false),
+        // Through the same door as every other reader, so the admin sees the
+        // currency the till will actually price in.
+        None => (
+            load_effective_rewards_org(pool.get_ref(), org_id).await?,
+            false,
+        ),
     };
     Ok(HttpResponse::Ok().json(RewardCatalogue {
         org_id,
@@ -573,5 +635,9 @@ pub async fn load_effective_rewards_org(
     pool: &PgPool,
     org_id: Uuid,
 ) -> Result<Vec<RewardItem>, AppError> {
-    load_reward_rows(pool, org_id, None).await
+    let mode = load_scope(pool, org_id, None)
+        .await?
+        .unwrap_or_else(|| LoyaltySettings::defaults(org_id, None))
+        .mode();
+    Ok(in_mode(load_reward_rows(pool, org_id, None).await?, mode))
 }

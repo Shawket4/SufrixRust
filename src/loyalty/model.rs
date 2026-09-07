@@ -103,18 +103,18 @@ impl MemberRow {
     }
 }
 
-/// The cheapest reward on offer in `mode`'s currency, or `None` when the
-/// catalogue has none priced in it.
+/// The cheapest reward on offer, or `None` when the catalogue is empty.
 ///
 /// This is what the pass counts towards. Aiming at the cheapest is the only
 /// target that is always true: a customer who can afford the espresso HAS
 /// earned a reward, whatever the cake costs.
-pub fn cheapest_cost(rewards: &[RewardItem], mode: Mode) -> Option<i32> {
-    rewards
-        .iter()
-        .filter(|r| r.cost_currency == mode.as_str())
-        .map(|r| r.cost_amount)
-        .min()
+///
+/// Takes no mode. A catalogue arrives priced in its scope's own currency
+/// (`settings::in_mode`), so there is nothing to filter by — and filtering by
+/// the row's stored copy is what made this return `None` for a shop with a full
+/// catalogue, quietly resetting every customer's target to the program default.
+pub fn cheapest_cost(rewards: &[RewardItem]) -> Option<i32> {
+    rewards.iter().map(|r| r.cost_amount).min()
 }
 
 /// Look a member up by the token their pass barcode carries.
@@ -174,7 +174,7 @@ pub async fn member_with_context(
     let settings = load_effective(pool, row.org_id, branch_id).await?;
     let (rewards, _) = load_effective_rewards(pool, row.org_id, branch_id).await?;
     let mode = settings.mode();
-    let target = cheapest_cost(&rewards, mode).unwrap_or(settings.default_reward_cost);
+    let target = cheapest_cost(&rewards).unwrap_or(settings.default_reward_cost);
     Ok((row.view(mode, target), rewards))
 }
 

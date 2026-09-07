@@ -134,7 +134,9 @@ pub async fn plan(
 
         let reward = catalogue
             .iter()
-            .find(|c| c.menu_item_id == menu_item_id && c.cost_currency == mode.as_str())
+            // Priced in this branch's currency by the loader, so the item id
+            // is the whole question.
+            .find(|c| c.menu_item_id == menu_item_id)
             .ok_or_else(|| {
                 AppError::BadRequest("That item is not a reward at this branch".into())
             })?;

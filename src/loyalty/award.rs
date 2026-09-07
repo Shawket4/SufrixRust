@@ -269,7 +269,7 @@ pub async fn award_inner(
         crate::loyalty::settings::load_effective_rewards(pool, order.org_id, order.branch_id)
             .await?;
     let mode = settings.mode();
-    let target = model::cheapest_cost(&rewards, mode).unwrap_or(settings.default_reward_cost);
+    let target = model::cheapest_cost(&rewards).unwrap_or(settings.default_reward_cost);
     let fresh = model::find_by_id(pool, member.id)
         .await?
         .ok_or_else(|| AppError::NotFound("Member not found".into()))?;

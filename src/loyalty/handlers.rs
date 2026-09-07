@@ -65,15 +65,19 @@ pub async fn lookup(
     let (all_rewards, _) = load_effective_rewards(pool.get_ref(), org_id, body.branch_id).await?;
     let recent = model::ledger(pool.get_ref(), member.id, 10).await?;
     let mode = settings.mode();
-    let target = model::cheapest_cost(&all_rewards, mode).unwrap_or(settings.default_reward_cost);
+    let target = model::cheapest_cost(&all_rewards).unwrap_or(settings.default_reward_cost);
     let view = member.clone().view(mode, target);
     // Only what this balance can actually buy, priced in the live currency. A
     // screen that lists a reward the customer cannot afford is a screen that
     // tempts a teller into handing it over anyway.
     let balance = member.balance_in(mode);
+    // Affordability only. The catalogue is already priced in this branch's
+    // currency, so a second check against the row's stored one could only drop
+    // rewards the shop had configured — a till that offered nothing while the
+    // dashboard listed a full catalogue, with nothing anywhere saying why.
     let rewards: Vec<_> = all_rewards
         .into_iter()
-        .filter(|r| r.cost_currency == mode.as_str() && r.cost_amount <= balance)
+        .filter(|r| r.cost_amount <= balance)
         .collect();
     Ok(HttpResponse::Ok().json(ScanResult {
         member: view,
@@ -149,7 +153,7 @@ pub async fn adjust(
     let settings = load_effective(pool.get_ref(), org_id, body.branch_id).await?;
     let (rewards, _) = load_effective_rewards(pool.get_ref(), org_id, body.branch_id).await?;
     let mode = settings.mode();
-    let target = model::cheapest_cost(&rewards, mode).unwrap_or(settings.default_reward_cost);
+    let target = model::cheapest_cost(&rewards).unwrap_or(settings.default_reward_cost);
 
     let view = model::adjust(
         pool.get_ref(),
@@ -223,7 +227,7 @@ pub async fn list_members(
         None => super::settings::load_effective_rewards_org(pool.get_ref(), org_id).await?,
     };
     let mode = scope.mode();
-    let target = model::cheapest_cost(&rewards, mode).unwrap_or(scope.default_reward_cost);
+    let target = model::cheapest_cost(&rewards).unwrap_or(scope.default_reward_cost);
 
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
@@ -307,7 +311,7 @@ pub async fn get_member(
     let rewards =
         super::settings::load_effective_rewards_org(pool.get_ref(), member.org_id).await?;
     let mode = scope.mode();
-    let target = model::cheapest_cost(&rewards, mode).unwrap_or(scope.default_reward_cost);
+    let target = model::cheapest_cost(&rewards).unwrap_or(scope.default_reward_cost);
     let ledger = model::ledger(pool.get_ref(), member.id, 200).await?;
     Ok(HttpResponse::Ok().json(MemberDetail {
         member: member.view(mode, target),

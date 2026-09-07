@@ -272,6 +272,77 @@ async fn the_reward_catalogue_refuses_another_tenants_menu_item(pool: PgPool) {
     );
 }
 
+/// The catalogue survives the program changing what it collects.
+///
+/// The order the dashboard's own tabs invite: add rewards, then set the mode.
+/// The rows are stamped `points` and the settings then say `visits`, and every
+/// read used to filter on the row's stored currency — so the till offered
+/// nothing at all, and `cheapest_cost` matched nothing so the card's target
+/// fell back to the program default. The dashboard relabelled the same rows
+/// with the CURRENT mode, so it showed a full, healthy catalogue throughout.
+/// Nothing anywhere reported a disagreement.
+#[sqlx::test]
+async fn a_catalogue_priced_before_the_mode_changed_is_still_claimable(pool: PgPool) {
+    perms(&pool).await;
+    let org = seed_org(&pool).await;
+    let branch = seed_branch(&pool, org, "Maadi").await;
+    let teller = seed_user(&pool, org, "teller").await;
+    // The program collects STAMPS...
+    enable_program_mode(&pool, org, "visits", 1000, 8, false).await;
+    let latte = seed_menu_item(&pool, org, "Latte", 5000).await;
+    // ...but the catalogue was saved while it still collected points.
+    seed_reward(&pool, org, latte, "points", 5).await;
+
+    let member = seed_member(&pool, org, "201000000021", "Mstalecurrency000000001").await;
+    // Comfortably more stamps than the reward costs — "they have more than
+    // orders", which is what made the empty list so baffling.
+    sqlx::query(
+        "INSERT INTO loyalty_transactions (org_id, customer_id, branch_id, kind, currency, points) \
+         VALUES ($1,$2,$3,'adjust','visits',9)",
+    )
+    .bind(org)
+    .bind(member)
+    .bind(branch)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (p, s) = app_data(&pool);
+    let app = test::init_service(
+        App::new()
+            .app_data(p)
+            .app_data(s)
+            .configure(super::routes::configure),
+    )
+    .await;
+    let jwt = token(teller, org, UserRole::Teller, Some(branch));
+
+    let req = test::TestRequest::post()
+        .uri("/loyalty/lookup")
+        .insert_header(("Authorization", format!("Bearer {jwt}")))
+        .set_json(json!({ "branch_id": branch, "token": "Mstalecurrency000000001" }))
+        .to_request();
+    let body: Value = test::call_and_read_body_json(&app, req).await;
+
+    let rewards = body["rewards"].as_array().expect("a rewards array");
+    assert_eq!(
+        rewards.len(),
+        1,
+        "the till must offer the reward the dashboard lists: {body}"
+    );
+    assert_eq!(rewards[0]["menu_item_id"], latte.to_string());
+    assert_eq!(
+        rewards[0]["cost_currency"], "visits",
+        "priced in what this branch actually collects, not what the row was stamped with"
+    );
+    assert_eq!(rewards[0]["cost_amount"], 5);
+    // And the member's target is the reward's cost, not the program default —
+    // `cheapest_cost` used to match nothing and fall back to 8.
+    assert_eq!(body["member"]["next_reward_cost"], 5);
+    assert_eq!(body["member"]["balance"], 9);
+    assert_eq!(body["member"]["can_redeem"], true);
+}
+
 // ── Public signup ────────────────────────────────────────────────────────────
 
 #[sqlx::test]

@@ -160,8 +160,7 @@ pub async fn join_info(
         enabled: settings.enabled,
         require_otp: settings.require_otp,
         mode: settings.mode.clone(),
-        next_reward_cost: model::cheapest_cost(&rewards, settings.mode())
-            .unwrap_or(settings.default_reward_cost),
+        next_reward_cost: model::cheapest_cost(&rewards).unwrap_or(settings.default_reward_cost),
         earn_piastres_per_point: settings.earn_piastres_per_point,
         rewards: rewards
             .into_iter()
@@ -287,8 +286,7 @@ pub async fn join(
         name: member.name.clone(),
         balance: member.balance_in(mode),
         mode: settings.mode.clone(),
-        next_reward_cost: model::cheapest_cost(&rewards, mode)
-            .unwrap_or(settings.default_reward_cost),
+        next_reward_cost: model::cheapest_cost(&rewards).unwrap_or(settings.default_reward_cost),
         brand,
         passes,
         already_member,
@@ -333,7 +331,7 @@ pub async fn card(
     let catalogue =
         super::settings::load_effective_rewards_org(pool.get_ref(), member.org_id).await?;
     let mode = settings.mode();
-    let target = model::cheapest_cost(&catalogue, mode).unwrap_or(settings.default_reward_cost);
+    let target = model::cheapest_cost(&catalogue).unwrap_or(settings.default_reward_cost);
     let org = crate::orgs::branding::load(pool.get_ref(), member.org_id).await?;
     let brand = card_brand(&org, &settings);
     let locations = wallet::locations_for_org(pool.get_ref(), member.org_id).await?;

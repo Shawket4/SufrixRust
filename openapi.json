@@ -56571,7 +56571,7 @@
           },
           "cost_currency": {
             "type": "string",
-            "description": "`\"points\"` or `\"visits\"` — what this reward is bought with."
+            "description": "`\"points\"` or `\"visits\"` — what this reward is bought with.\n\nAlways the currency of the scope this was READ through, never whatever\nthe row happened to be written with. A program has one mode\n([`LoyaltySettings::mode`]) and a reward is priced in it; the stored\ncolumn is a record of intent, not an independent fact, and letting the\ntwo disagree is what made a whole catalogue vanish from the till while\nthe dashboard still listed it."
           },
           "image_url": {
             "type": [
