@@ -26,6 +26,47 @@ use super::model::MemberRow;
 use super::settings::LoyaltySettings;
 use crate::errors::AppError;
 
+/// Both wallets cap the locations they will act on at ten; more are ignored, so
+/// sending more only costs bytes on every device holding the pass.
+const MAX_LOCATIONS: usize = 10;
+
+/// A branch as a pass surfaces it: Apple puts it on the lock screen when the
+/// customer is nearby, Google geofences the object the same way.
+///
+/// Shared by both wallets, which is why it lives here rather than in either.
+#[derive(Debug, Clone)]
+pub struct PassLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub name: String,
+}
+
+/// Every branch of the org that has coordinates.
+///
+/// These are the columns the staff-geofencing work already added and the branch
+/// dialog already edits — the program needed no new location UI, only a reason
+/// to read them.
+pub async fn locations_for_org(pool: &PgPool, org_id: Uuid) -> Result<Vec<PassLocation>, AppError> {
+    let rows: Vec<(f64, f64, String)> = sqlx::query_as(
+        "SELECT latitude, longitude, name FROM branches \
+          WHERE org_id = $1 AND is_active AND deleted_at IS NULL \
+            AND latitude IS NOT NULL AND longitude IS NOT NULL \
+          ORDER BY name LIMIT $2",
+    )
+    .bind(org_id)
+    .bind(MAX_LOCATIONS as i64)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(latitude, longitude, name)| PassLocation {
+            latitude,
+            longitude,
+            name,
+        })
+        .collect())
+}
+
 /// What signup hands the customer. Either side may be absent: a tenant with only
 /// Google credentials configured shows one button, not a broken one.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -52,7 +93,12 @@ pub fn loyalty_base() -> Option<String> {
 }
 
 /// Build both "add to wallet" links for a member.
-pub fn links_for(member: &MemberRow, settings: &LoyaltySettings, org_name: &str) -> PassLinks {
+pub fn links_for(
+    member: &MemberRow,
+    settings: &LoyaltySettings,
+    org_name: &str,
+    locations: &[PassLocation],
+) -> PassLinks {
     // Relative to the site root, and under `/api/` — which is what nginx proxies
     // to the backend. Two things this deliberately is NOT:
     //
@@ -68,7 +114,7 @@ pub fn links_for(member: &MemberRow, settings: &LoyaltySettings, org_name: &str)
             member.member_token
         )
     });
-    let google_url = google::save_url(member, settings, org_name).unwrap_or_else(|e| {
+    let google_url = google::save_url(member, settings, org_name, locations).unwrap_or_else(|e| {
         // A misconfigured issuer must not take the signup down with it.
         tracing::warn!(error = %e, "loyalty: could not build the Google Wallet save link");
         None
@@ -177,7 +223,7 @@ mod tests {
             std::env::set_var("LOYALTY_APPLE_WWDR_PEM", "x");
         }
         let s = LoyaltySettings::defaults(Uuid::nil(), None);
-        let links = links_for(&member(), &s, "Test Org");
+        let links = links_for(&member(), &s, "Test Org", &[]);
         assert_eq!(
             links.apple_url.as_deref(),
             Some("/api/public/loyalty/pass/Mabcdefghijklmnopqrstuv/apple.pkpass"),
@@ -194,7 +240,7 @@ mod tests {
             std::env::remove_var("LOYALTY_APPLE_KEY_PEM");
             std::env::remove_var("LOYALTY_APPLE_WWDR_PEM");
         }
-        let bare = links_for(&member(), &s, "Test Org");
+        let bare = links_for(&member(), &s, "Test Org", &[]);
         assert!(bare.apple_url.is_none());
         assert!(!bare.any, "no wallet configured means the QR fallback, not a dead button");
     }

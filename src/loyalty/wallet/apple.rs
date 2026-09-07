@@ -19,11 +19,9 @@ use crate::errors::AppError;
 use crate::loyalty::model::MemberRow;
 use crate::loyalty::settings::LoyaltySettings;
 
-use super::google::progress_line;
+pub use super::{PassLocation, locations_for_org};
 
-/// Apple shows at most ten locations on a pass; more are ignored, so sending
-/// more wastes bytes on every device that holds it.
-const MAX_LOCATIONS: usize = 10;
+use super::google::progress_line;
 
 /// The images every pass carries, compiled into the binary.
 ///
@@ -85,40 +83,6 @@ pub fn is_configured() -> bool {
         && pem_material("LOYALTY_APPLE_CERT_PEM").is_some()
         && pem_material("LOYALTY_APPLE_KEY_PEM").is_some()
         && pem_material("LOYALTY_APPLE_WWDR_PEM").is_some()
-}
-
-/// A branch as the pass surfaces it on the lock screen.
-#[derive(Debug, Clone)]
-pub struct PassLocation {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub name: String,
-}
-
-/// Every branch of the org that has coordinates.
-///
-/// These are the columns the staff-geofencing work already added and the branch
-/// dialog already edits — the program needed no new location UI, only a reason
-/// to read them.
-pub async fn locations_for_org(pool: &PgPool, org_id: Uuid) -> Result<Vec<PassLocation>, AppError> {
-    let rows: Vec<(f64, f64, String)> = sqlx::query_as(
-        "SELECT latitude, longitude, name FROM branches \
-          WHERE org_id = $1 AND is_active AND deleted_at IS NULL \
-            AND latitude IS NOT NULL AND longitude IS NOT NULL \
-          ORDER BY name LIMIT $2",
-    )
-    .bind(org_id)
-    .bind(MAX_LOCATIONS as i64)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(latitude, longitude, name)| PassLocation {
-            latitude,
-            longitude,
-            name,
-        })
-        .collect())
 }
 
 /// The pass as Apple models it.

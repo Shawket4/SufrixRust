@@ -1248,3 +1248,48 @@ async fn a_stamp_card_earns_one_per_order_whatever_the_bill(pool: PgPool) {
     assert_eq!(visits_of(&pool, member).await, 1);
     assert_eq!(balance_of(&pool, member).await, 0);
 }
+
+/// A pass surfaces at THIS org's branches and nobody else's.
+///
+/// The coordinates come from a table shared by every tenant, so the query's
+/// `org_id` filter is the whole boundary. Getting it wrong would put a rival
+/// shop's address on a customer's lock screen — quiet, and only visible to the
+/// customer standing outside the wrong door.
+#[sqlx::test]
+async fn pass_locations_are_scoped_to_the_org(pool: PgPool) {
+    let org = seed_org(&pool).await;
+    let other = seed_org(&pool).await;
+    let mine = seed_branch(&pool, org, "Maadi").await;
+    let theirs = seed_branch(&pool, other, "Their Branch").await;
+    let no_coords = seed_branch(&pool, org, "Unmapped").await;
+
+    for (b, lat, lng) in [(mine, 30.04, 31.23), (theirs, 25.20, 55.27)] {
+        sqlx::query("UPDATE branches SET latitude = $2, longitude = $3 WHERE id = $1")
+            .bind(b)
+            .bind(lat)
+            .bind(lng)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let locs = crate::loyalty::wallet::locations_for_org(&pool, org).await.unwrap();
+    let names: Vec<&str> = locs.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["Maadi"], "only this org's mapped branches: {names:?}");
+    let _ = no_coords; // present, unmapped, and correctly absent from the pass.
+
+    // A soft-deleted or deactivated branch stops surfacing — a customer should
+    // not be sent to a shop that has closed.
+    sqlx::query("UPDATE branches SET is_active = false WHERE id = $1")
+        .bind(mine)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        crate::loyalty::wallet::locations_for_org(&pool, org)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a closed branch must not stay on the pass"
+    );
+}

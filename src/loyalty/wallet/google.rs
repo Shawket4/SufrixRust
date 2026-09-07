@@ -115,6 +115,7 @@ pub fn loyalty_object(
     issuer: &str,
     member: &MemberRow,
     settings: &LoyaltySettings,
+    locations: &[super::PassLocation],
 ) -> serde_json::Value {
     let program = settings.program_name.clone();
     let mode = settings.mode();
@@ -140,7 +141,19 @@ pub fn loyalty_object(
             "type": "QR_CODE",
             "value": member.member_token,
             "alternateText": member.name
-        }
+        },
+        // Geofences the card to the shop's branches, so it surfaces on the
+        // phone when the customer is there — Google's counterpart to Apple's
+        // lock-screen `locations`. Only branches whose coordinates an admin has
+        // actually set; a branch without them simply does not surface.
+        "locations": locations
+            .iter()
+            .map(|l| json!({
+                "kind": "walletobjects#latLongPoint",
+                "latitude": l.latitude,
+                "longitude": l.longitude,
+            }))
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -189,6 +202,7 @@ pub fn save_url(
     member: &MemberRow,
     settings: &LoyaltySettings,
     org_name: &str,
+    locations: &[super::PassLocation],
 ) -> Result<Option<String>, AppError> {
     let (Some(issuer), Some(email), Some(key)) = (issuer_id(), sa_email(), sa_key()) else {
         return Ok(None);
@@ -203,7 +217,7 @@ pub fn save_url(
         // first save rather than needing a separate provisioning step.
         payload: json!({
             "loyaltyClasses": [loyalty_class(&issuer, member.org_id, org_name, settings)],
-            "loyaltyObjects": [loyalty_object(&issuer, member, settings)],
+            "loyaltyObjects": [loyalty_object(&issuer, member, settings, locations)],
         }),
     };
     let encoding = EncodingKey::from_rsa_pem(key.as_bytes()).map_err(|e| {
