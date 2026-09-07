@@ -190,6 +190,40 @@ fn in_mall_order_url(
     ))
 }
 
+/// The reservations bundle's origin. A DIFFERENT host from the ordering one —
+/// `reservations.madar-pos.cloud` vs `order.madar-pos.cloud` — because the two
+/// are separately built, separately deployed apps that share no code.
+///
+/// Unset degrades the same way `PUBLIC_ORDER_BASE_URL` does: a 503 the operator
+/// can read, rather than a QR card pointing at nowhere. (`bookings::whatsapp`
+/// reads the same variable and degrades more softly — it drops the manage link
+/// from the message rather than failing the booking.)
+fn reservations_base() -> Result<String, AppError> {
+    std::env::var("PUBLIC_RESERVATIONS_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim_end_matches('/').to_string())
+        .ok_or_else(|| {
+            AppError::ServiceUnavailable("PUBLIC_RESERVATIONS_BASE_URL not configured".into())
+        })
+}
+
+/// Build `{PUBLIC_RESERVATIONS_BASE_URL}/{org_id}` — the guest picks the branch.
+fn org_booking_url(org_id: Uuid) -> Result<String, AppError> {
+    Ok(format!("{}/{}", reservations_base()?, org_id))
+}
+
+/// Build `{PUBLIC_RESERVATIONS_BASE_URL}/{org_id}/{branch_id}` — one branch,
+/// straight to its slot picker.
+fn branch_booking_url(org_id: Uuid, branch_id: Uuid) -> Result<String, AppError> {
+    Ok(format!(
+        "{}/{}/{}",
+        reservations_base()?,
+        org_id,
+        branch_id
+    ))
+}
+
 /// Build `{base}/order/{org_id}` — org-wide branch picker.
 /// Org is the path segment; no branch pre-selection so the customer sees the picker.
 fn org_order_url(org_id: Uuid) -> Result<String, AppError> {
@@ -369,6 +403,143 @@ pub async fn org_qr(
     let qr_data_url = render_data_url(&row.short_url, &q)?;
     Ok(HttpResponse::Ok().json(QrResponse {
         kind: "org_order".into(),
+        long_url: row.long_url,
+        short_url: row.short_url,
+        short_code: row.short_code,
+        qr_data_url,
+    }))
+}
+
+// ── GET /branches/{id}/booking-qr ────────────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/branches/{id}/booking-qr",
+    tag = "qr",
+    params(
+        ("id" = Uuid, Path, description = "Branch ID"),
+        QrRenderQuery,
+        SlugQuery,
+    ),
+    responses(
+        (status = 200, description = "Branch table-booking QR", body = QrResponse),
+        AppErrorResponse,
+    ),
+    security(("bearer_jwt" = []))
+)]
+pub async fn branch_booking_qr(
+    req: HttpRequest,
+    pool: crate::db::Db,
+    provider: web::Data<Arc<dyn ShortLinkProvider>>,
+    id: web::Path<Uuid>,
+    q: web::Query<QrRenderQuery>,
+    slug_q: web::Query<SlugQuery>,
+) -> Result<HttpResponse, AppError> {
+    let claims = extract_claims(&req)?;
+    check_permission(pool.get_ref(), &claims, "bookings", "read").await?;
+    let (branch_id, org_id) = load_branch_checked(pool.get_ref(), &claims, *id).await?;
+
+    // Refuse to print a card that leads to a page saying "we don't take
+    // bookings". The settings row defaults `enabled` to false, so this is the
+    // normal state of a branch nobody has turned bookings on for.
+    let enabled: Option<bool> = sqlx::query_scalar(
+        "SELECT enabled FROM branch_booking_settings WHERE branch_id = $1",
+    )
+    .bind(branch_id)
+    .fetch_optional(pool.get_ref())
+    .await?;
+    if enabled != Some(true) {
+        return Err(AppError::Conflict(
+            "Bookings are switched off for this branch".into(),
+        ));
+    }
+
+    let long_url = branch_booking_url(org_id, branch_id)?;
+    let row = db::get_or_create_short_link(
+        pool.get_ref(),
+        provider.get_ref().as_ref(),
+        org_id,
+        Some(branch_id),
+        "branch_booking",
+        &branch_id.to_string(),
+        &long_url,
+        slug_q.slug.as_deref(),
+        None,
+    )
+    .await?;
+
+    let qr_data_url = render_data_url(&row.short_url, &q)?;
+    Ok(HttpResponse::Ok().json(QrResponse {
+        kind: "branch_booking".into(),
+        long_url: row.long_url,
+        short_url: row.short_url,
+        short_code: row.short_code,
+        qr_data_url,
+    }))
+}
+
+// ── GET /orgs/{id}/booking-qr ────────────────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/orgs/{id}/booking-qr",
+    tag = "qr",
+    params(
+        ("id" = Uuid, Path, description = "Organisation ID"),
+        QrRenderQuery,
+    ),
+    responses(
+        (status = 200, description = "Org-wide branch-picker booking QR", body = QrResponse),
+        AppErrorResponse,
+    ),
+    security(("bearer_jwt" = []))
+)]
+pub async fn org_booking_qr(
+    req: HttpRequest,
+    pool: crate::db::Db,
+    provider: web::Data<Arc<dyn ShortLinkProvider>>,
+    id: web::Path<Uuid>,
+    q: web::Query<QrRenderQuery>,
+) -> Result<HttpResponse, AppError> {
+    let claims = extract_claims(&req)?;
+    check_permission(pool.get_ref(), &claims, "bookings", "read").await?;
+    let org_id = *id;
+    require_same_org(&claims, Some(org_id))?;
+
+    // The org card leads to a branch picker, so it needs at least one branch
+    // that actually takes bookings — otherwise the picker is empty.
+    let any: bool = sqlx::query_scalar(
+        "SELECT EXISTS( \
+           SELECT 1 FROM branch_booking_settings s \
+           JOIN branches b ON b.id = s.branch_id \
+           WHERE b.org_id = $1 AND b.deleted_at IS NULL AND s.enabled)",
+    )
+    .bind(org_id)
+    .fetch_one(pool.get_ref())
+    .await?;
+    if !any {
+        return Err(AppError::Conflict(
+            "No branch in this organisation takes bookings yet".into(),
+        ));
+    }
+
+    let long_url = org_booking_url(org_id)?;
+    let row = db::get_or_create_short_link(
+        pool.get_ref(),
+        provider.get_ref().as_ref(),
+        org_id,
+        None,
+        "org_booking",
+        &org_id.to_string(),
+        &long_url,
+        None,
+        None,
+    )
+    .await?;
+
+    let qr_data_url = render_data_url(&row.short_url, &q)?;
+    Ok(HttpResponse::Ok().json(QrResponse {
+        kind: "org_booking".into(),
         long_url: row.long_url,
         short_url: row.short_url,
         short_code: row.short_code,

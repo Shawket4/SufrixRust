@@ -826,4 +826,101 @@ mod http {
         assert_eq!(standard.kind, "branch_order");
         assert_eq!(in_mall.kind, "branch_order_in_mall");
     }
+
+    // ── Booking QR (the reservations app, a different host entirely) ──────────
+
+    /// Turn bookings on for a branch, the way the settings dialog does.
+    async fn enable_bookings(pool: &PgPool, org_id: Uuid, branch_id: Uuid) {
+        sqlx::query(
+            "INSERT INTO branch_booking_settings (org_id, branch_id, enabled) \
+             VALUES ($1, $2, true) \
+             ON CONFLICT (branch_id) DO UPDATE SET enabled = true",
+        )
+        .bind(org_id)
+        .bind(branch_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn booking_qr_points_at_the_reservations_app(pool: PgPool) {
+        // Safety: test process is single-threaded at this point.
+        unsafe {
+            std::env::set_var("PUBLIC_RESERVATIONS_BASE_URL", "https://reservations.example.com")
+        };
+        let org_id = seed_org(&pool).await;
+        let branch_id = seed_branch(&pool, org_id).await;
+        enable_bookings(&pool, org_id, branch_id).await;
+        grant(&pool, "org_admin", "bookings", "read").await;
+
+        let fake = Arc::new(FakeShortLinkProvider::new()) as Arc<dyn ShortLinkProvider>;
+        let app = test::init_service(make_app(pool.clone(), fake)).await;
+        let tok = org_admin_token(Uuid::new_v4(), org_id);
+
+        let resp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/branches/{branch_id}/booking-qr?card=false"))
+                .insert_header(("Authorization", format!("Bearer {tok}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 200);
+        let qr: QrResponse = test::read_body_json(resp).await;
+        assert_eq!(qr.kind, "branch_booking");
+        // The reservations bundle routes on `/{org}/{branch}` — NOT `/order/...`,
+        // and not the ordering host.
+        assert_eq!(
+            qr.long_url,
+            format!("https://reservations.example.com/{org_id}/{branch_id}")
+        );
+
+        let resp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/orgs/{org_id}/booking-qr?card=false"))
+                .insert_header(("Authorization", format!("Bearer {tok}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 200);
+        let qr: QrResponse = test::read_body_json(resp).await;
+        assert_eq!(qr.kind, "org_booking");
+        assert_eq!(qr.long_url, format!("https://reservations.example.com/{org_id}"));
+    }
+
+    /// A card leading to "we don't take bookings" is worse than no card, and a
+    /// branch's settings row defaults `enabled` to false — so this is the state
+    /// of every branch until someone turns bookings on.
+    #[sqlx::test]
+    async fn booking_qr_refuses_a_branch_with_bookings_off(pool: PgPool) {
+        // Safety: test process is single-threaded at this point.
+        unsafe {
+            std::env::set_var("PUBLIC_RESERVATIONS_BASE_URL", "https://reservations.example.com")
+        };
+        let org_id = seed_org(&pool).await;
+        let branch_id = seed_branch(&pool, org_id).await;
+        grant(&pool, "org_admin", "bookings", "read").await;
+
+        let fake = Arc::new(FakeShortLinkProvider::new()) as Arc<dyn ShortLinkProvider>;
+        let app = test::init_service(make_app(pool.clone(), fake)).await;
+        let tok = org_admin_token(Uuid::new_v4(), org_id);
+
+        for uri in [
+            format!("/branches/{branch_id}/booking-qr"),
+            format!("/orgs/{org_id}/booking-qr"),
+        ] {
+            let resp = test::call_service(
+                &app,
+                test::TestRequest::get()
+                    .uri(&uri)
+                    .insert_header(("Authorization", format!("Bearer {tok}")))
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(resp.status(), 409, "{uri} with bookings off");
+        }
+    }
+
 }

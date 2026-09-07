@@ -23,7 +23,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 "/{id}/onboarding/complete",
                 web::post().to(crate::orgs::onboarding::complete_onboarding),
             )
-            .route("/{id}/qr", web::get().to(qr_handlers::org_qr)),
+            .route("/{id}/qr", web::get().to(qr_handlers::org_qr))
+            .route(
+                "/{id}/booking-qr",
+                web::get().to(qr_handlers::org_booking_qr),
+            ),
     );
 
     cfg.service(web::scope("/public/orgs").route("", web::get().to(handlers::list_public_orgs)));

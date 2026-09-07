@@ -14,6 +14,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::delete().to(handlers::delete_branch))
             // QR
             .route("/{id}/qr", web::get().to(qr_handlers::branch_qr))
+            .route(
+                "/{id}/booking-qr",
+                web::get().to(qr_handlers::branch_booking_qr),
+            )
             // Tables
             .route("/{id}/tables", web::get().to(qr_handlers::list_tables))
             .route("/{id}/tables", web::post().to(qr_handlers::create_table))
