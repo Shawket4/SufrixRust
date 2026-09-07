@@ -4046,6 +4046,180 @@
         ]
       }
     },
+    "/branches/{id}/loyalty-qr": {
+      "get": {
+        "tags": [
+          "qr"
+        ],
+        "summary": "The counter's join QR: a static, per-branch card that opens the public\nsignup form. Static on purpose — it is printed once and stood on a counter,\nso it must keep working with no reprint. The per-CUSTOMER QR is a different\nthing entirely: it lives on their Wallet pass and carries their member token.",
+        "operationId": "branch_loyalty_qr",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Branch ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "card",
+            "in": "query",
+            "description": "`true` (default) → branded A6 card PNG; `false` → plain receipt QR PNG.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "caption",
+            "in": "query",
+            "description": "Dynamic caption line beneath the tagline (A6 card only).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dpi",
+            "in": "query",
+            "description": "Raster DPI for the A6 card (clamped 72–2400). Default 600.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "bleed_mm",
+            "in": "query",
+            "description": "Print bleed in mm (A6 card only). Default 0.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "crop_marks",
+            "in": "query",
+            "description": "Draw crop marks (A6 card, only meaningful when `bleed_mm > 0`).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "svg",
+            "in": "query",
+            "description": "Return the A6 card as SVG (`data:image/svg+xml;base64,…`). Default false.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "module_px",
+            "in": "query",
+            "description": "Pixels per module for the plain receipt QR (1–40). Default 16.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Branch loyalty join QR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
     "/branches/{id}/qr": {
       "get": {
         "tags": [
@@ -14740,6 +14914,1020 @@
         ]
       }
     },
+    "/loyalty/adjust": {
+      "post": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "loyalty_adjust",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjustRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/award": {
+      "post": {
+        "tags": [
+          "loyalty"
+        ],
+        "summary": "The live route. Tellers press the button; the permission is the same `update`\nthe redeem action needs.",
+        "operationId": "loyalty_award",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AwardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AwardResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/lookup": {
+      "post": {
+        "tags": [
+          "loyalty"
+        ],
+        "summary": "Identify the member in front of the till.",
+        "description": "A POST rather than a GET because the member token is a bearer-ish secret: in\na query string it would land in access logs, browser history and any proxy\nin between.",
+        "operationId": "loyalty_lookup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/members": {
+      "get": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "list_loyalty_members",
+        "parameters": [
+          {
+            "name": "branch_id",
+            "in": "query",
+            "description": "Scopes the thresholds shown. Omit to use the org default.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Name or phone fragment.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/members/{id}": {
+      "get": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "get_loyalty_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Member ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "branch_id",
+            "in": "query",
+            "description": "Scopes the thresholds shown. Omit to use the org default.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Name or phone fragment.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/reward-items": {
+      "get": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "get_loyalty_reward_items",
+        "parameters": [
+          {
+            "name": "branch_id",
+            "in": "query",
+            "description": "Omit for the org-wide default; supply a branch for its override.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewardCatalogue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "put_loyalty_reward_items",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRewardItems"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewardCatalogue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
+    "/loyalty/settings": {
+      "get": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "get_loyalty_settings",
+        "parameters": [
+          {
+            "name": "branch_id",
+            "in": "query",
+            "description": "Omit for the org-wide default; supply a branch for its override.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltySettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "put_loyalty_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoyaltySettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltySettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "loyalty"
+        ],
+        "operationId": "delete_loyalty_settings",
+        "parameters": [
+          {
+            "name": "branch_id",
+            "in": "query",
+            "description": "Omit for the org-wide default; supply a branch for its override.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_jwt": []
+          }
+        ]
+      }
+    },
     "/menu-item-sizes/{size_id}/recipe": {
       "put": {
         "tags": [
@@ -23717,6 +24905,450 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/loyalty/card/{token}": {
+      "get": {
+        "tags": [
+          "loyalty-public"
+        ],
+        "operationId": "loyalty_card",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Member token from the pass barcode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/loyalty/card/{token}/qr.png": {
+      "get": {
+        "tags": [
+          "loyalty-public"
+        ],
+        "summary": "The member's QR as a PNG.",
+        "description": "Rendered server-side with the same renderer the printed cards use, rather\nthan shipping a QR library to the browser — and rendered from the token\nDIRECTLY, never through a Shlink short link: a short URL is a public\nredirect, and the member token is the one value here that has to stay\nbetween the customer and the till.\n\nThis is the fallback that makes the program usable before either wallet is\nconfigured — and the answer for a customer whose phone has no wallet app.",
+        "operationId": "loyalty_card_qr",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Member token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Member QR as a PNG"
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/loyalty/join": {
+      "post": {
+        "tags": [
+          "loyalty-public"
+        ],
+        "operationId": "loyalty_join",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/loyalty/join-info": {
+      "get": {
+        "tags": [
+          "loyalty-public"
+        ],
+        "operationId": "loyalty_join_info",
+        "parameters": [
+          {
+            "name": "branch_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — validation failed or malformed input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — insufficient permission or wrong org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — FK or domain invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/loyalty/pass/{token}/apple.pkpass": {
+      "get": {
+        "tags": [
+          "loyalty-public"
+        ],
+        "summary": "Download the signed `.pkpass`.",
+        "description": "503s until Apple credentials are configured — see\n`wallet::apple::sign_manifest`. The button that leads here is only rendered\nwhen `apple::is_configured()`, so a customer does not meet this by accident.",
+        "operationId": "loyalty_apple_pass",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Member token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apple Wallet pass"
           },
           "400": {
             "description": "Bad request — validation failed or malformed input",
@@ -40020,6 +41652,35 @@
           }
         }
       },
+      "AdjustRequest": {
+        "type": "object",
+        "required": [
+          "branch_id",
+          "customer_id",
+          "points"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "points": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Signed. Negative takes points away."
+          }
+        }
+      },
       "AdvanceDecision": {
         "type": "object",
         "description": "Deciding a SALARY ADVANCE. Deliberately not called `DecisionRequest`: staff\nrequests have their own decision body carrying `is_paid`, and two structs\nsharing a name collapse into one OpenAPI schema — which silently gave every\ngenerated client the wrong shape for one of them.",
@@ -40759,6 +42420,89 @@
           },
           "timezone": {
             "type": "string"
+          }
+        }
+      },
+      "AwardRequest": {
+        "type": "object",
+        "required": [
+          "branch_id"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "order_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server's order id — the history path, where the order is synced."
+          },
+          "order_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The client-minted idempotency key — the just-checked-out path, where the\norder may not have reached the server yet. Resolved to the same order."
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the teller pressed the button. Absent = now.\n\nAn offline till stamps the press and queues it, so a drain days later\nstill credits an award that was made in time. Bounded on arrival (see\nthe module docs) so it cannot be used to reach outside the window."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who. A scanned pass token, a typed phone, or an already-resolved member."
+          }
+        }
+      },
+      "AwardResult": {
+        "type": "object",
+        "required": [
+          "member",
+          "points_awarded",
+          "already_awarded",
+          "order_id"
+        ],
+        "properties": {
+          "already_awarded": {
+            "type": "boolean",
+            "description": "True when this order had already earned — a double tap, a retry, or a\nreplayed offline op. Not an error: the outcome is the one that was asked\nfor, and the response carries the balance that resulted."
+          },
+          "member": {
+            "$ref": "#/components/schemas/MemberView"
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "points_awarded": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Points this sale earned. 0 when it was too small to reach one point."
           }
         }
       },
@@ -42368,6 +44112,61 @@
           "restore_inventory": {
             "type": "boolean",
             "description": "true (default): ingredients stay available. false: the food was made and is\nwasted — the frozen plan is deducted from stock and logged as `waste`."
+          }
+        }
+      },
+      "CardView": {
+        "type": "object",
+        "description": "The member's own card page — what they see when they open the link again.\n\nThe token in the path is the member's secret, which is why this returns only\nwhat the pass already shows and never the phone number in full.",
+        "required": [
+          "name",
+          "balance",
+          "mode",
+          "next_reward_cost",
+          "points_to_next_reward",
+          "can_redeem",
+          "program_name",
+          "member_token",
+          "rewards",
+          "passes"
+        ],
+        "properties": {
+          "balance": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The live balance, in `mode`'s currency."
+          },
+          "can_redeem": {
+            "type": "boolean"
+          },
+          "member_token": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_reward_cost": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passes": {
+            "$ref": "#/components/schemas/PassLinks"
+          },
+          "points_to_next_reward": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "program_name": {
+            "type": "string"
+          },
+          "rewards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicReward"
+            }
           }
         }
       },
@@ -44592,6 +46391,21 @@
             "items": {
               "$ref": "#/components/schemas/OrderItemInput"
             }
+          },
+          "loyalty_customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The loyalty member spending a balance on this sale. Required when\n`loyalty_redemptions` is non-empty, and ONLY for that: earning is a\nseparate, later act (`POST /loyalty/award`), so a sale that redeems\nnothing never names a member here."
+          },
+          "loyalty_redemptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoyaltyRedemptionInput"
+            },
+            "description": "Rewards covering lines of this cart. Each names a line by its index in\n`items` and how many of that line's units the reward pays for, so a\nmixed basket can have one free coffee among four paid ones."
           },
           "notes": {
             "type": [
@@ -47805,6 +49619,162 @@
           }
         }
       },
+      "JoinInfo": {
+        "type": "object",
+        "description": "What the signup page needs to render itself before anyone types anything.",
+        "required": [
+          "branch_id",
+          "branch_name",
+          "org_name",
+          "program_name",
+          "enabled",
+          "require_otp",
+          "mode",
+          "next_reward_cost",
+          "earn_piastres_per_point",
+          "rewards"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "branch_name": {
+            "type": "string"
+          },
+          "earn_piastres_per_point": {
+            "type": "integer",
+            "format": "int32",
+            "description": "EGP that earns one point — the page's \"a point for every N EGP\" line.\nPiastres on the wire, as everywhere; the page divides by 100. Only\nmeaningful when `mode` is `\"points\"`."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "False when the program is off here — the page says so instead of taking\na signup that would go nowhere."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`\"points\"` (earned on spend) or `\"visits\"` (a stamp per order) — which\nsentence the page writes."
+          },
+          "next_reward_cost": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The cheapest reward on offer, in `mode`'s currency."
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "program_name": {
+            "type": "string"
+          },
+          "program_name_ar": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "require_otp": {
+            "type": "boolean",
+            "description": "The page collects an OTP only when the branch asks for one."
+          },
+          "rewards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicReward"
+            },
+            "description": "The rewards on offer, each with what it costs."
+          },
+          "terms": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terms_ar": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "JoinInput": {
+        "type": "object",
+        "required": [
+          "branch_id",
+          "name",
+          "phone"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "device_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device-trust token from `/public/otp/verify`. Required only when the\nbranch's `require_otp` is on."
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "'en' or 'ar' — the language the pass is written in."
+          },
+          "name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          }
+        }
+      },
+      "JoinResult": {
+        "type": "object",
+        "description": "What the customer sees after signing up: their card, and the buttons.",
+        "required": [
+          "member_token",
+          "name",
+          "balance",
+          "mode",
+          "next_reward_cost",
+          "program_name",
+          "passes",
+          "already_member"
+        ],
+        "properties": {
+          "already_member": {
+            "type": "boolean",
+            "description": "True when this phone was already a member — the page says \"welcome back\"\nand shows the existing card rather than pretending to have made a new one."
+          },
+          "balance": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The live balance, in `mode`'s currency. Zero for a fresh member."
+          },
+          "member_token": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_reward_cost": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passes": {
+            "$ref": "#/components/schemas/PassLinks"
+          },
+          "program_name": {
+            "type": "string"
+          }
+        }
+      },
       "KitchenLine": {
         "type": "object",
         "description": "A slim kitchen display line (NO prices) — what the cook reads. Built from an\norder item or a ticket round line by the caller.",
@@ -48165,6 +50135,76 @@
           }
         }
       },
+      "LedgerEntry": {
+        "type": "object",
+        "description": "One line of a member's history.",
+        "required": [
+          "id",
+          "kind",
+          "currency",
+          "points",
+          "branch_id",
+          "created_at"
+        ],
+        "properties": {
+          "basis_piastres": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Piastres the rule was applied to (earns only)."
+          },
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "branch_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currency": {
+            "type": "string",
+            "description": "`\"points\"` or `\"visits\"` — which balance this row moved."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "points": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reward_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "LedgerTotals": {
         "type": "object",
         "required": [
@@ -48298,6 +50338,32 @@
           }
         }
       },
+      "LookupRequest": {
+        "type": "object",
+        "required": [
+          "branch_id"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Manual fallback for a customer whose phone is dead."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The token from the scanned pass barcode. Preferred."
+          }
+        }
+      },
       "LowStockRow": {
         "type": "object",
         "required": [
@@ -48363,6 +50429,131 @@
           },
           "unit": {
             "type": "string"
+          }
+        }
+      },
+      "LoyaltyRedemptionInput": {
+        "type": "object",
+        "description": "One reward applied to one line of the cart.",
+        "required": [
+          "item_index"
+        ],
+        "properties": {
+          "item_index": {
+            "type": "integer",
+            "description": "Index into `items`. An index rather than an id because a cart may hold\nthe same menu item on two lines with different modifiers, and only the\nposition tells them apart.",
+            "minimum": 0
+          },
+          "units": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many of that line's units the reward covers. Defaults to one."
+          }
+        }
+      },
+      "LoyaltySettings": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "enabled",
+          "program_name",
+          "mode",
+          "earn_piastres_per_point",
+          "earn_on_discounted",
+          "earn_include_tax",
+          "default_reward_cost",
+          "require_otp"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` = the org-wide default. A branch id = that branch's override."
+          },
+          "default_reward_cost": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The cost offered by default when an admin adds a reward, in whatever this\nscope collects. Each reward may override it, so one catalogue holds\n\"espresso, 5 visits\" beside \"cake, 10 visits\". Also the pass's fallback\ntarget when no rewards have been curated yet."
+          },
+          "earn_include_tax": {
+            "type": "boolean",
+            "description": "Add tax to the basis. Tips never earn and have no toggle."
+          },
+          "earn_on_discounted": {
+            "type": "boolean",
+            "description": "Earn on what was actually paid rather than the pre-discount subtotal."
+          },
+          "earn_piastres_per_point": {
+            "type": "integer",
+            "format": "int32",
+            "description": "One point per this many piastres. 1000 = a point per 10 EGP. The\ndashboard shows and accepts EGP; the wire is always piastres."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The program switch for this scope."
+          },
+          "mode": {
+            "type": "string",
+            "description": "What this scope collects: `\"points\"` (from money spent) or `\"visits\"`\n(one stamp per sale). One or the other — never both."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pass_background_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pass_foreground_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pass_label_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pass_logo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "program_name": {
+            "type": "string"
+          },
+          "program_name_ar": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "require_otp": {
+            "type": "boolean",
+            "description": "Verify the signup phone by WhatsApp code, like bookings and ordering."
+          },
+          "terms": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terms_ar": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -48749,6 +50940,126 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserPublic"
+          }
+        }
+      },
+      "MemberDetail": {
+        "type": "object",
+        "required": [
+          "member",
+          "ledger"
+        ],
+        "properties": {
+          "ledger": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntry"
+            }
+          },
+          "member": {
+            "$ref": "#/components/schemas/MemberView"
+          }
+        }
+      },
+      "MemberView": {
+        "type": "object",
+        "description": "A member as the teller, the admin and the pass all see them.\n\nBoth balances travel, because an org may switch mode (or run points at one\nbranch and stamps at another) and what a customer earned under the old rules\nis still theirs. `mode` says which one is LIVE where the question was asked,\nand `balance` is that one — so a caller never has to pick.",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "phone",
+          "points_balance",
+          "visits_balance",
+          "lifetime_points",
+          "lifetime_visits",
+          "mode",
+          "balance",
+          "next_reward_cost",
+          "points_to_next_reward",
+          "can_redeem",
+          "locale",
+          "enrolled_at"
+        ],
+        "properties": {
+          "balance": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The live balance, in `mode`'s currency."
+          },
+          "can_redeem": {
+            "type": "boolean",
+            "description": "The balance affords at least one reward on offer here."
+          },
+          "enrolled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lifetime_points": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lifetime_visits": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "`\"points\"` or `\"visits\"` — what the branch that asked collects."
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_reward_cost": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The cheapest reward on offer here, in `mode`'s currency — what the\nprogress line counts towards. Falls back to the scope's default cost\nwhen no rewards have been curated."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "points_balance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "points_to_next_reward": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`next_reward_cost - balance`, floored at zero."
+          },
+          "visits_balance": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "MembersPage": {
+        "type": "object",
+        "required": [
+          "members",
+          "total"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberView"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -51310,6 +53621,33 @@
           }
         }
       },
+      "PassLinks": {
+        "type": "object",
+        "description": "What signup hands the customer. Either side may be absent: a tenant with only\nGoogle credentials configured shows one button, not a broken one.",
+        "required": [
+          "any"
+        ],
+        "properties": {
+          "any": {
+            "type": "boolean",
+            "description": "False when neither wallet is configured — the site shows the member's\nQR on the page instead of dead buttons."
+          },
+          "apple_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Downloads the signed `.pkpass`."
+          },
+          "google_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`https://pay.google.com/gp/v/save/<jwt>`."
+          }
+        }
+      },
       "PatchGroupRequest": {
         "type": "object",
         "description": "Every field optional — only present keys are updated. `Option<Option<T>>` (with\n`deserialize_with`) is avoided; nullable columns that must be clearable\n(`max_selections`) are handled by a dedicated presence flag pattern below.",
@@ -52643,6 +54981,27 @@
           }
         }
       },
+      "PublicReward": {
+        "type": "object",
+        "description": "A reward as the signup page lists it: what it is, and what it costs.",
+        "required": [
+          "name",
+          "cost_currency",
+          "cost_amount"
+        ],
+        "properties": {
+          "cost_amount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cost_currency": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "PublicSlot": {
         "type": "object",
         "required": [
@@ -53143,6 +55502,28 @@
               "$ref": "#/components/schemas/RecipeStepInput"
             },
             "description": "The whole list, in order. Replaces what was there."
+          }
+        }
+      },
+      "PutRewardItems": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewardItemInput"
+            },
+            "description": "The complete list for this scope, in order. An empty list clears the\nscope — for a branch that means going back to inheriting the org's."
           }
         }
       },
@@ -54080,6 +56461,109 @@
           }
         }
       },
+      "RewardCatalogue": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "inherited",
+          "items"
+        ],
+        "properties": {
+          "branch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "inherited": {
+            "type": "boolean",
+            "description": "True when these rows are the org default rather than this branch's own."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewardItem"
+            }
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RewardItem": {
+        "type": "object",
+        "required": [
+          "menu_item_id",
+          "name",
+          "base_price",
+          "cost_currency",
+          "cost_amount",
+          "sort_order"
+        ],
+        "properties": {
+          "base_price": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Menu price in piastres — what the reward is worth, for the admin's sake."
+          },
+          "cost_amount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How much of that currency it costs. Per item, so one catalogue holds\n\"espresso, 5 visits\" beside \"cake, 10 visits\"."
+          },
+          "cost_currency": {
+            "type": "string",
+            "description": "`\"points\"` or `\"visits\"` — what this reward is bought with."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "menu_item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Denormalised for display so the teller and the pass need no menu join."
+          },
+          "sort_order": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "RewardItemInput": {
+        "type": "object",
+        "required": [
+          "menu_item_id"
+        ],
+        "properties": {
+          "cost_amount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Omitted follows the scope's `default_reward_cost`."
+          },
+          "cost_currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"points\"` or `\"visits\"`. Omitted follows the scope's mode."
+          },
+          "menu_item_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "RolePermission": {
         "type": "object",
         "required": [
@@ -54229,6 +56713,34 @@
             "items": {
               "$ref": "#/components/schemas/TablePosition"
             }
+          }
+        }
+      },
+      "ScanResult": {
+        "type": "object",
+        "description": "What the teller's scan screen shows.",
+        "required": [
+          "member",
+          "rewards",
+          "recent"
+        ],
+        "properties": {
+          "member": {
+            "$ref": "#/components/schemas/MemberView"
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntry"
+            },
+            "description": "Recent history, so a teller can answer \"where did my points go?\"."
+          },
+          "rewards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewardItem"
+            },
+            "description": "What this member could claim at this branch right now. Empty until the\nbalance reaches the threshold, so the screen cannot tempt a teller into\nhanding over a reward that has not been earned."
           }
         }
       },
@@ -54498,6 +57010,21 @@
               "null"
             ],
             "format": "int32"
+          },
+          "loyalty_customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The member spending a balance on this settle, when rewards are applied."
+          },
+          "loyalty_redemptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoyaltyRedemptionInput"
+            },
+            "description": "Rewards covering lines of the ticket. A table-service bill redeems\nexactly like a counter one — the cashier scans at settle either way."
           },
           "payment_method": {
             "type": "string"

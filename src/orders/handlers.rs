@@ -445,6 +445,29 @@ pub struct CreateOrderRequest {
     /// collision-safe (a managed per-device code makes concurrent tills unique).
     #[serde(default)]
     pub order_ref: Option<String>,
+    /// The loyalty member spending a balance on this sale. Required when
+    /// `loyalty_redemptions` is non-empty, and ONLY for that: earning is a
+    /// separate, later act (`POST /loyalty/award`), so a sale that redeems
+    /// nothing never names a member here.
+    #[serde(default)]
+    pub loyalty_customer_id: Option<Uuid>,
+    /// Rewards covering lines of this cart. Each names a line by its index in
+    /// `items` and how many of that line's units the reward pays for, so a
+    /// mixed basket can have one free coffee among four paid ones.
+    #[serde(default)]
+    pub loyalty_redemptions: Vec<LoyaltyRedemptionInput>,
+}
+
+/// One reward applied to one line of the cart.
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
+pub struct LoyaltyRedemptionInput {
+    /// Index into `items`. An index rather than an id because a cart may hold
+    /// the same menu item on two lines with different modifiers, and only the
+    /// position tells them apart.
+    pub item_index: usize,
+    /// How many of that line's units the reward covers. Defaults to one.
+    #[serde(default)]
+    pub units: Option<i32>,
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -790,6 +813,12 @@ pub(crate) async fn create_order_inner(
         unit_price: i32,
         /// True when this line's charged price/availability deviated from the catalog.
         price_flagged: bool,
+        /// A reward paid for some or all of this line.
+        is_reward: bool,
+        /// Piastres the reward covered on this line. Subtracted from the stored
+        /// line total so the persisted order agrees with the subtotal the
+        /// customer was charged — the receipt and the books read the same.
+        reward_covered: i32,
         quantity: i32,
         notes: Option<String>,
         addons: Vec<ResolvedAddon>,
@@ -815,6 +844,21 @@ pub(crate) async fn create_order_inner(
         is_swap: bool,
     }
 
+    // ── Loyalty redemptions ─────────────────────────────────────────────────
+    // Resolved BEFORE pricing: a reward changes what is owed, so a redemption
+    // that cannot be honoured must fail the sale outright rather than leave a
+    // line free that nobody paid for. Everything here is server-side — the till
+    // names a member and some lines, never a price.
+    let redemption_plan = crate::loyalty::redeem::plan(
+        pool.get_ref(),
+        actor.org_id,
+        body.branch_id,
+        body.loyalty_customer_id,
+        &body.loyalty_redemptions,
+        &body.items,
+    )
+    .await?;
+
     let mut resolved_items: Vec<ResolvedItem> = Vec::new();
     // `subtotal` accumulates the CHARGED line totals (what the customer paid);
     // `expected_subtotal` mirrors it using catalog + branch-override prices so we
@@ -822,7 +866,7 @@ pub(crate) async fn create_order_inner(
     let mut subtotal: i32 = 0;
     let mut expected_subtotal: i32 = 0;
 
-    for item_input in &body.items {
+    for (line_index, item_input) in body.items.iter().enumerate() {
         if item_input.quantity <= 0 {
             return Err(AppError::BadRequest("Item quantity must be > 0".into()));
         }
@@ -1259,9 +1303,25 @@ pub(crate) async fn create_order_inner(
                 * item_input.quantity
                 + component_surcharge;
 
+        // A reward pays for whole units of this line, modifiers included — the
+        // customer chose oat milk and the reward is the drink they chose. The
+        // charge is reduced, never taken below zero.
+        let covered = redemption_plan
+            .units_for(line_index)
+            .map(|units| {
+                let per_unit = unit_price + charged_addon_per_unit + optional_per_unit;
+                (per_unit * units).min(charged_line_subtotal)
+            })
+            .unwrap_or(0);
+        let charged_line_subtotal = charged_line_subtotal - covered;
+        let is_reward_line = covered > 0;
+
         // Flag the line when the charged price deviated from the catalog, or the item
         // was disabled at this branch (a stale/offline sale — recorded, not rejected).
-        let line_price_flagged = branch_disabled || charged_line_subtotal != expected_line_subtotal;
+        // A reward line is EXEMPT: it is meant to differ from the catalog price,
+        // and flagging it would bury the real price anomalies in noise.
+        let line_price_flagged =
+            !is_reward_line && (branch_disabled || charged_line_subtotal != expected_line_subtotal);
 
         subtotal += charged_line_subtotal;
         expected_subtotal += expected_line_subtotal;
@@ -1272,6 +1332,8 @@ pub(crate) async fn create_order_inner(
             name_translations,
             size_label: item_input.size_label.clone(),
             unit_price,
+            is_reward: is_reward_line,
+            reward_covered: covered,
             price_flagged: line_price_flagged,
             quantity: item_input.quantity,
             notes: item_input.notes.clone(),
@@ -1654,7 +1716,9 @@ pub(crate) async fn create_order_inner(
     };
 
     for resolved in resolved_items {
-        let line_total = resolved.unit_price * resolved.quantity + resolved.component_surcharge;
+        let line_total = (resolved.unit_price * resolved.quantity + resolved.component_surcharge
+            - resolved.reward_covered)
+            .max(0);
         let snapshot = serde_json::to_value(&resolved.deductions)
             .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
 
@@ -1674,8 +1738,8 @@ pub(crate) async fn create_order_inner(
                 (order_id, menu_item_id, item_name, name_translations, size_label,
                  unit_price, quantity, line_total, notes, deductions_snapshot,
                  bundle_id, bundle_unit_price, line_cost, unit_cost, cost_missing,
-                 price_flagged)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 price_flagged, is_reward)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                RETURNING id, order_id, menu_item_id, item_name, name_translations, size_label,
                          unit_price, quantity, line_total, notes, deductions_snapshot,
                          bundle_id, bundle_unit_price, line_cost, unit_cost, cost_missing"#,
@@ -1696,6 +1760,7 @@ pub(crate) async fn create_order_inner(
         .bind(costs.unit_cost)
         .bind(costs.cost_missing)
         .bind(resolved.price_flagged)
+        .bind(resolved.is_reward)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -1934,7 +1999,26 @@ pub(crate) async fn create_order_inner(
         .await?;
     }
 
+    // Record what the rewards spent, inside the order's own transaction: a free
+    // coffee and the ledger row that paid for it commit together or not at all.
+    crate::loyalty::redeem::record(
+        &mut tx,
+        &redemption_plan,
+        actor.org_id,
+        body.branch_id,
+        order.id,
+        Some(actor.teller_id),
+    )
+    .await?;
+
     tx.commit().await?;
+    // The balance on the customer's phone must not outlive the sale that spent
+    // it. After the commit, never inside — the same rule realtime follows.
+    if let Some(member) = &redemption_plan.member
+        && !redemption_plan.is_empty()
+    {
+        crate::loyalty::wallet::push_update(pool.get_ref(), member.id);
+    }
 
     if let (Some(hub), Some(kt_id)) = (hub, kitchen_ticket_id) {
         crate::kitchen::publish_kitchen(

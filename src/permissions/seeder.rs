@@ -318,6 +318,22 @@ pub async fn seed_role_permissions(pool: &PgPool) -> Result<(), sqlx::Error> {
         ("teller", "bookings", "update", true),
         ("waiter", "bookings", "read", true),
         ("waiter", "bookings", "update", true),
+        // ── loyalty (points program) ──────────────────────────────
+        // Admins author the program and may correct a balance by hand (which
+        // `handlers::adjust` additionally gates on the admin roles, since
+        // `permission_action` has no rung above `update`). Tellers identify a
+        // member and redeem — they never award points, because earning is
+        // computed server-side from the order. Waiters and the KDS have no part
+        // in it: the scan happens at checkout, which is the teller's screen.
+        ("org_admin", "loyalty", "create", true),
+        ("org_admin", "loyalty", "read", true),
+        ("org_admin", "loyalty", "update", true),
+        ("org_admin", "loyalty", "delete", true),
+        ("branch_manager", "loyalty", "create", true),
+        ("branch_manager", "loyalty", "read", true),
+        ("branch_manager", "loyalty", "update", true),
+        ("teller", "loyalty", "read", true),
+        ("teller", "loyalty", "update", true),
     ];
 
     for &(role, resource, action, granted) in defaults {

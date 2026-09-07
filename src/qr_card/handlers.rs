@@ -208,6 +208,24 @@ fn reservations_base() -> Result<String, AppError> {
         })
 }
 
+/// Base of the public loyalty site (`loyalty.madar-pos.cloud`). Degrades like
+/// the two above: a 503 the operator can read, rather than a printed card that
+/// leads nowhere.
+fn loyalty_base() -> Result<String, AppError> {
+    std::env::var("PUBLIC_LOYALTY_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim_end_matches('/').to_string())
+        .ok_or_else(|| {
+            AppError::ServiceUnavailable("PUBLIC_LOYALTY_BASE_URL not configured".into())
+        })
+}
+
+/// Build `{PUBLIC_LOYALTY_BASE_URL}/join/{branch_id}` — the counter's join form.
+fn branch_loyalty_url(branch_id: Uuid) -> Result<String, AppError> {
+    Ok(format!("{}/join/{}", loyalty_base()?, branch_id))
+}
+
 /// Build `{PUBLIC_RESERVATIONS_BASE_URL}/{org_id}` — the guest picks the branch.
 fn org_booking_url(org_id: Uuid) -> Result<String, AppError> {
     Ok(format!("{}/{}", reservations_base()?, org_id))
@@ -216,12 +234,7 @@ fn org_booking_url(org_id: Uuid) -> Result<String, AppError> {
 /// Build `{PUBLIC_RESERVATIONS_BASE_URL}/{org_id}/{branch_id}` — one branch,
 /// straight to its slot picker.
 fn branch_booking_url(org_id: Uuid, branch_id: Uuid) -> Result<String, AppError> {
-    Ok(format!(
-        "{}/{}/{}",
-        reservations_base()?,
-        org_id,
-        branch_id
-    ))
+    Ok(format!("{}/{}/{}", reservations_base()?, org_id, branch_id))
 }
 
 /// Build `{base}/order/{org_id}` — org-wide branch picker.
@@ -442,12 +455,11 @@ pub async fn branch_booking_qr(
     // Refuse to print a card that leads to a page saying "we don't take
     // bookings". The settings row defaults `enabled` to false, so this is the
     // normal state of a branch nobody has turned bookings on for.
-    let enabled: Option<bool> = sqlx::query_scalar(
-        "SELECT enabled FROM branch_booking_settings WHERE branch_id = $1",
-    )
-    .bind(branch_id)
-    .fetch_optional(pool.get_ref())
-    .await?;
+    let enabled: Option<bool> =
+        sqlx::query_scalar("SELECT enabled FROM branch_booking_settings WHERE branch_id = $1")
+            .bind(branch_id)
+            .fetch_optional(pool.get_ref())
+            .await?;
     if enabled != Some(true) {
         return Err(AppError::Conflict(
             "Bookings are switched off for this branch".into(),
@@ -909,4 +921,71 @@ pub async fn list_marketing_links(
     .await?;
 
     Ok(HttpResponse::Ok().json(links))
+}
+
+// ── GET /branches/{id}/loyalty-qr ────────────────────────────────────────────
+
+/// The counter's join QR: a static, per-branch card that opens the public
+/// signup form. Static on purpose — it is printed once and stood on a counter,
+/// so it must keep working with no reprint. The per-CUSTOMER QR is a different
+/// thing entirely: it lives on their Wallet pass and carries their member token.
+#[utoipa::path(
+    get,
+    path = "/branches/{id}/loyalty-qr",
+    tag = "qr",
+    params(
+        ("id" = Uuid, Path, description = "Branch ID"),
+        QrRenderQuery,
+        SlugQuery,
+    ),
+    responses(
+        (status = 200, description = "Branch loyalty join QR", body = QrResponse),
+        AppErrorResponse,
+    ),
+    security(("bearer_jwt" = []))
+)]
+pub async fn branch_loyalty_qr(
+    req: HttpRequest,
+    pool: crate::db::Db,
+    provider: web::Data<Arc<dyn ShortLinkProvider>>,
+    id: web::Path<Uuid>,
+    q: web::Query<QrRenderQuery>,
+    slug_q: web::Query<SlugQuery>,
+) -> Result<HttpResponse, AppError> {
+    let claims = extract_claims(&req)?;
+    check_permission(pool.get_ref(), &claims, "loyalty", "read").await?;
+    let (branch_id, org_id) = load_branch_checked(pool.get_ref(), &claims, *id).await?;
+
+    // Refuse to print a card that leads to a page saying "we run no program
+    // here" — the same guard the booking QR has, for the same reason.
+    let settings =
+        crate::loyalty::settings::load_effective(pool.get_ref(), org_id, branch_id).await?;
+    if !settings.enabled {
+        return Err(AppError::Conflict(
+            "The loyalty program is switched off for this branch".into(),
+        ));
+    }
+
+    let long_url = branch_loyalty_url(branch_id)?;
+    let row = db::get_or_create_short_link(
+        pool.get_ref(),
+        provider.get_ref().as_ref(),
+        org_id,
+        Some(branch_id),
+        "branch_loyalty",
+        &branch_id.to_string(),
+        &long_url,
+        slug_q.slug.as_deref(),
+        None,
+    )
+    .await?;
+
+    let qr_data_url = render_data_url(&row.short_url, &q)?;
+    Ok(HttpResponse::Ok().json(QrResponse {
+        kind: "branch_loyalty".into(),
+        long_url: row.long_url,
+        short_url: row.short_url,
+        short_code: row.short_code,
+        qr_data_url,
+    }))
 }

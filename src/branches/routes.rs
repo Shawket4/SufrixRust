@@ -18,6 +18,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 "/{id}/booking-qr",
                 web::get().to(qr_handlers::branch_booking_qr),
             )
+            .route(
+                "/{id}/loyalty-qr",
+                web::get().to(qr_handlers::branch_loyalty_qr),
+            )
             // Tables
             .route("/{id}/tables", web::get().to(qr_handlers::list_tables))
             .route("/{id}/tables", web::post().to(qr_handlers::create_table))

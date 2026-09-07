@@ -25,6 +25,8 @@ RUN CARGO_PROFILE_RELEASE_LTO=${LTO_MODE} cargo build --release --bin madar-rust
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    `# libssl3: Apple Wallet pass signing (PKCS#7 over the manifest).` \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/madar-rust /usr/local/bin/madar-rust
 WORKDIR /app

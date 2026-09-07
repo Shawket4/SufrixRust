@@ -77,6 +77,13 @@ pub struct SettleOpenTicketRequest {
     pub tip_payment_method: Option<String>,
     #[serde(default)]
     pub amount_tendered: Option<i32>,
+    /// The member spending a balance on this settle, when rewards are applied.
+    #[serde(default)]
+    pub loyalty_customer_id: Option<Uuid>,
+    /// Rewards covering lines of the ticket. A table-service bill redeems
+    /// exactly like a counter one — the cashier scans at settle either way.
+    #[serde(default)]
+    pub loyalty_redemptions: Vec<crate::orders::handlers::LoyaltyRedemptionInput>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
@@ -767,6 +774,8 @@ pub(crate) async fn settle_open_ticket_inner(
     // deductions/inventory/tax, and lands the sale in the cashier's drawer.
     let request = CreateOrderRequest {
         branch_id,
+        loyalty_customer_id: body.loyalty_customer_id,
+        loyalty_redemptions: body.loyalty_redemptions.clone(),
         shift_id: body.shift_id,
         payment_method: body.payment_method.clone(),
         customer_name,

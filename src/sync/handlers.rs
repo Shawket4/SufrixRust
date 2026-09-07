@@ -46,6 +46,15 @@ pub enum ReplayOp {
         order_id: Uuid,
         request: VoidOrderRequest,
     },
+    // Adding a sale's loyalty points — an explicit teller action, queued when
+    // the till was offline. The request carries `requested_at` (the moment the
+    // button was pressed), so a drain days later still credits an award made in
+    // time; the server bounds that claim against the order's own timestamp, so
+    // a queued op can never reach outside the 24-hour window.
+    AwardLoyaltyPoints {
+        teller_id: Uuid,
+        request: crate::loyalty::award::AwardRequest,
+    },
     CashMovement {
         teller_id: Uuid,
         shift_id: Uuid,
@@ -149,7 +158,8 @@ impl ReplayOp {
             | ReplayOp::FulfillTableTransfer { teller_id, .. }
             | ReplayOp::ClearTable { teller_id, .. }
             | ReplayOp::SeatBooking { teller_id, .. }
-            | ReplayOp::NoShowBooking { teller_id, .. } => *teller_id,
+            | ReplayOp::NoShowBooking { teller_id, .. }
+            | ReplayOp::AwardLoyaltyPoints { teller_id, .. } => *teller_id,
         }
     }
 
@@ -166,7 +176,11 @@ impl ReplayOp {
             | ReplayOp::CreateOrder { .. }
             | ReplayOp::VoidOrder { .. }
             | ReplayOp::CashMovement { .. }
-            | ReplayOp::SettleOpenTicket { .. } => *role == Teller,
+            | ReplayOp::SettleOpenTicket { .. }
+            // The award button lives on the teller's receipt and history; a
+            // waiter never sees it, so a queued award attributed to one could
+            // not have been made live.
+            | ReplayOp::AwardLoyaltyPoints { .. } => *role == Teller,
             ReplayOp::FireOpenTicket { .. } | ReplayOp::AddTicketRound { .. } => *role == Waiter,
             ReplayOp::VoidOpenTicket { .. } => matches!(role, Teller | Waiter),
             // A kitchen device bumps; a teller may bump the till queue too.
@@ -218,6 +232,10 @@ impl ReplayOp {
             ReplayOp::SeatBooking { .. } | ReplayOp::NoShowBooking { .. } => {
                 &[("bookings", "update")]
             }
+            // Lock-step with `loyalty::award::award`'s own check, so a teller
+            // whose loyalty grant was revoked cannot get an award through by
+            // having queued it offline.
+            ReplayOp::AwardLoyaltyPoints { .. } => &[("loyalty", "update")],
         }
     }
 }
@@ -349,6 +367,15 @@ pub async fn replay(
                 order_id,
                 web::Json(request),
                 actor,
+            )
+            .await
+        }
+        ReplayOp::AwardLoyaltyPoints { request, .. } => {
+            crate::loyalty::award::award_inner(
+                pool.get_ref(),
+                request,
+                Some(actor.teller_id),
+                Some(actor.org_id),
             )
             .await
         }
@@ -556,6 +583,14 @@ async fn op_branch_must_be_in_org(pool: &PgPool, op: &ReplayOp, org: Uuid) -> Re
             .bind(order_id)
             .fetch_optional(pool)
             .await?
+        }
+        // Resolved through the branch the op names; `award_inner` then re-checks
+        // it against the ORDER's own org, which is the boundary that counts.
+        ReplayOp::AwardLoyaltyPoints { request, .. } => {
+            sqlx::query_scalar("SELECT org_id FROM branches WHERE id = $1")
+                .bind(request.branch_id)
+                .fetch_optional(pool)
+                .await?
         }
         ReplayOp::FireOpenTicket { request, .. } => {
             sqlx::query_scalar("SELECT org_id FROM branches WHERE id = $1")

@@ -21,6 +21,17 @@ chrono             = { version = "0.4", features = ["serde"] }
 # date arithmetic into every query. Pure data, no C dependency.
 chrono-tz          = "0.10"
 sha2               = "0.10"
+# Apple Wallet: SHA-1 manifest digests (the format Apple specifies) and the
+# .pkpass zip. Both were already in the tree transitively; named here because
+# `src/loyalty/wallet/apple.rs` uses them directly.
+sha1               = "0.10"
+# Apple Wallet pass signing: a PKCS#7 detached signature over the manifest.
+# OpenSSL rather than the pure-Rust CMS crates because `cms` is still a
+# pre-release and a signature iOS rejects fails silently, with no diagnostic
+# anyone can act on — `PKCS7_sign` is what every pass implementation uses.
+# The builder stage already carries libssl-dev; the runtime stage gains libssl3.
+openssl            = "0.10"
+zip                = { version = "3", default-features = false }
 jsonwebtoken       = { version = "10", features = ["rust_crypto"] }
 bcrypt             = "0.19"
 argon2             = "0.5"

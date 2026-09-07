@@ -54,6 +54,9 @@ pub const RESOURCES: &[&str] = &[
     "table_transfers",
     // Table bookings (host surfaces; the public site is unauthenticated).
     "bookings",
+    // The loyalty program: the admin's rules and reward catalogue, and the
+    // teller's scan/redeem. The signup site is unauthenticated, like bookings'.
+    "loyalty",
     // Delivery.
     "delivery_orders",
     "delivery_settings",

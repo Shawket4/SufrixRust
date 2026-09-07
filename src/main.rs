@@ -15,10 +15,10 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use madar_rust::openapi::ApiDoc;
 use madar_rust::{
-    ai, analytics, auth, bookings, branches, bundles, costing, delivery, demo, discounts,
-    insights, integrations, inventory, kitchen, menu, orders, orgs, payment_methods,
-    permissions, purchasing, qr_card, realtime, recipes, reports, reservations, shifts, staff,
-    stocktakes, sync, tickets, tills, uploads, users,
+    ai, analytics, auth, bookings, branches, bundles, costing, delivery, demo, discounts, insights,
+    integrations, inventory, kitchen, loyalty, menu, orders, orgs, payment_methods, permissions,
+    purchasing, qr_card, realtime, recipes, reports, reservations, shifts, staff, stocktakes, sync,
+    tickets, tills, uploads, users,
 };
 
 use utoipa::OpenApi;
@@ -288,6 +288,11 @@ async fn run() -> std::io::Result<()> {
             .configure(payment_methods::routes::configure)
             .configure(costing::routes::configure)
             .configure(delivery::routes::configure)
+            .configure(loyalty::routes::configure)
+            // Apple's own paths, where a pass's `webServiceURL` points. Not
+            // under JwtMiddleware: the caller is a customer's phone, which
+            // authenticates with the pass's own token.
+            .configure(loyalty::wallet::web_service::configure)
             .configure(qr_card::routes::configure)
             .configure(ai::routes::configure);
 
