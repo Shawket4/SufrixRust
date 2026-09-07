@@ -5,6 +5,15 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Deploys touch one box and one container, so they must not overlap. Without
+# this, two pushes in quick succession race: both build, both deploy, and which
+# image ends up running is decided by whichever finishes last. `cancel-in-progress`
+# is FALSE deliberately — cancelling a run mid-deploy could leave the container
+# stopped. A queued run simply waits and then deploys the newer commit.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   IMAGE: ghcr.io/shawket4/madarrust
 
